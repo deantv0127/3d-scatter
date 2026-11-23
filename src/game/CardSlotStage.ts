@@ -115,6 +115,7 @@ interface CardRig {
   springBounce: boolean;
   delayTimer: number;
   hideWhileDelayed: boolean;
+  isDisposing: boolean;
   highlightIntensity: number;
   targetHighlight: number;
   highlightColor: THREE.Color;
@@ -626,6 +627,7 @@ export class CardSlotStage {
       springBounce: false,
       delayTimer: 0,
       hideWhileDelayed: false,
+      isDisposing: false,
       highlightIntensity: 0,
       targetHighlight: 0,
       highlightColor: new THREE.Color(0xfacc15),
@@ -720,22 +722,24 @@ export class CardSlotStage {
       rig.targetHighlight = 0;
       rig.targetScale = 1;
       rig.hideWhileDelayed = false;
+      rig.isDisposing = false;
     }
 
-    // Phase 1: Snappy sweep-out launch (no freeze delay)
+    // Phase 1: Dealer side-sweep disposal (whisk used cards off to the right discard side)
     soundEngine.playSpinLaunch();
     for (const rig of this.cardRigs) {
-      rig.delayTimer = rig.cell.col * 0.022 * tMul;
+      rig.delayTimer = (GRID_COLS - 1 - rig.cell.col) * 0.02 * tMul;
       rig.springBounce = false;
+      rig.isDisposing = true;
       rig.targetPos.set(
-        cellToWorldX(rig.cell.col),
-        cellToWorldY(rig.cell.row) - 4.9,
-        -0.5,
+        8.6 + (GRID_COLS - 1 - rig.cell.col) * 0.35,
+        cellToWorldY(rig.cell.row) - 0.35 + (rig.cell.row - 1.5) * 0.18,
+        0.55 + rig.cell.row * 0.08,
       );
-      rig.targetRot.set(-0.28, Math.PI * 0.75, 0);
-      rig.targetScale = 0.86;
+      rig.targetRot.set(0.14, Math.PI * 0.48, -0.36);
+      rig.targetScale = 0.72;
     }
-    await this.waitMs(175 * tMul);
+    await this.waitMs(235 * tMul);
     if (this.disposed) return;
 
     // Phase 2: Staggered column cascade deal with brisk spring snap
@@ -753,6 +757,7 @@ export class CardSlotStage {
         rig.scale = 0.94;
         rig.velY = -4.2;
         rig.springBounce = true;
+        rig.isDisposing = false;
         rig.delayTimer = (col * 0.062 + (GRID_ROWS - 1 - row) * 0.02) * tMul;
         rig.hideWhileDelayed = true;
         rig.group.visible = rig.delayTimer <= 0.001;
@@ -821,14 +826,21 @@ export class CardSlotStage {
       for (const rig of this.cardRigs) {
         if (winPosSet.has(`${rig.cell.col}:${rig.cell.row}`)) {
           this.emitParticles(rig.pos.x, rig.pos.y, 0.45, 7, 0xfef08a);
-          rig.targetScale = 0.01;
-          rig.targetRot.y = Math.PI * 1.25;
-          rig.targetPos.z = 1.05;
+          rig.springBounce = false;
+          rig.isDisposing = true;
+          rig.delayTimer = (GRID_COLS - 1 - rig.cell.col) * 0.015 * tMul;
+          rig.targetPos.set(
+            8.4 + (GRID_COLS - 1 - rig.cell.col) * 0.3,
+            rig.pos.y + 0.38,
+            0.95 + rig.cell.row * 0.08,
+          );
+          rig.targetRot.set(0.18, Math.PI * 0.65, -0.45);
+          rig.targetScale = 0.56;
           rig.targetHighlight = 0;
         }
       }
 
-      await this.waitMs(190 * tMul);
+      await this.waitMs(240 * tMul);
       if (this.disposed) return;
 
       const survivorMoves = new Map<string, CardRig>();
@@ -848,6 +860,7 @@ export class CardSlotStage {
           rig.cell = { ...drop.cell };
           rig.springBounce = true;
           rig.hideWhileDelayed = false;
+          rig.isDisposing = false;
           rig.delayTimer = drop.toCol * 0.02 * tMul;
           rig.targetPos.set(
             cellToWorldX(drop.toCol),
@@ -871,6 +884,7 @@ export class CardSlotStage {
         rig.scale = 0.92;
         rig.velY = -3.4;
         rig.springBounce = true;
+        rig.isDisposing = false;
         rig.hideWhileDelayed = true;
         rig.delayTimer = (nc.col * 0.045 + 0.03) * tMul;
         rig.group.visible = rig.delayTimer <= 0.001;
@@ -908,6 +922,7 @@ export class CardSlotStage {
     for (const rig of this.cardRigs) {
       rig.group.visible = true;
       rig.hideWhileDelayed = false;
+      rig.isDisposing = false;
       rig.targetPos.set(
         cellToWorldX(rig.cell.col),
         cellToWorldY(rig.cell.row),
@@ -1159,8 +1174,18 @@ export class CardSlotStage {
       const goalY = rig.targetPos.y;
       const goalZ = rig.targetPos.z + idleFloatZ + (isInspected ? 0.56 : 0);
 
-      rig.pos.x = THREE.MathUtils.damp(rig.pos.x, goalX, 18, dt);
-      rig.pos.z = THREE.MathUtils.damp(rig.pos.z, goalZ, 16, dt);
+      rig.pos.x = THREE.MathUtils.damp(
+        rig.pos.x,
+        goalX,
+        rig.isDisposing ? 24 : 18,
+        dt,
+      );
+      rig.pos.z = THREE.MathUtils.damp(
+        rig.pos.z,
+        goalZ,
+        rig.isDisposing ? 20 : 16,
+        dt,
+      );
 
       if (rig.springBounce) {
         const stiffness = 340;

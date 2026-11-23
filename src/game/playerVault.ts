@@ -2,11 +2,15 @@ import { User } from 'firebase/auth';
 import {
   doc,
   getDoc,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
+
+export const DAILY_BONUS_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+export const DAILY_BONUS_STREAK_RESET_MS = 48 * 60 * 60 * 1000;
 
 export interface PlayerVaultProfile {
   uid: string;
@@ -19,6 +23,8 @@ export interface PlayerVaultProfile {
   totalSpins: number;
   totalWon: number;
   biggestWin: number;
+  lastDailyBonusAtMs: number | null;
+  dailyBonusStreak: number;
 }
 
 export interface PlayerVaultPatch {
@@ -29,6 +35,21 @@ export interface PlayerVaultPatch {
   totalSpins: number;
   totalWon: number;
   biggestWin: number;
+}
+
+export interface DailyBonusStatus {
+  eligible: boolean;
+  msRemaining: number;
+  nextStreak: number;
+  rewardAmount: number;
+}
+
+export interface DailyBonusClaimResult {
+  claimed: boolean;
+  rewardAmount: number;
+  newBalance: number;
+  streak: number;
+  lastDailyBonusAtMs: number | null;
 }
 
 function clampMoney(val: number): number {
@@ -49,6 +70,51 @@ function sanitizeDisplayName(raw: string | null | undefined): string {
 function sanitizePhotoUrl(raw: string | null | undefined): string | undefined {
   const cleaned = (raw ?? '').trim().slice(0, 512);
   return cleaned.length > 0 ? cleaned : undefined;
+}
+
+function extractMillis(raw: unknown): number | null {
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    return raw;
+  }
+  if (raw && typeof raw === 'object') {
+    const maybeTs = raw as { toMillis?: () => number; seconds?: number };
+    if (typeof maybeTs.toMillis === 'function') {
+      const ms = maybeTs.toMillis();
+      return Number.isFinite(ms) ? ms : null;
+    }
+    if (typeof maybeTs.seconds === 'number' && Number.isFinite(maybeTs.seconds)) {
+      return maybeTs.seconds * 1000;
+    }
+  }
+  return null;
+}
+
+export function getDailyBonusStatus(
+  lastClaimMs: number | null,
+  currentStreak: number,
+  nowMs: number = Date.now(),
+): DailyBonusStatus {
+  const safeStreak = clampInt(currentStreak, 10000);
+  const elapsed = lastClaimMs === null ? Infinity : Math.max(0, nowMs - lastClaimMs);
+  const eligible = lastClaimMs === null || elapsed >= DAILY_BONUS_COOLDOWN_MS;
+  const msRemaining =
+    lastClaimMs === null ? 0 : Math.max(0, DAILY_BONUS_COOLDOWN_MS - elapsed);
+
+  const nextStreak =
+    lastClaimMs === null || elapsed > DAILY_BONUS_STREAK_RESET_MS
+      ? 1
+      : Math.min(10000, safeStreak + 1);
+
+  // Day 1: $150 -> Day 7+: $450 (strictly within <= 500 server rule cap)
+  const tierIndex = Math.min(nextStreak, 7) - 1;
+  const rewardAmount = Math.min(450, 150 + tierIndex * 50);
+
+  return {
+    eligible,
+    msRemaining,
+    nextStreak,
+    rewardAmount,
+  };
 }
 
 export async function ensurePlayerVault(
@@ -92,6 +158,8 @@ export async function ensurePlayerVault(
       totalSpins: clampInt(Number(data.totalSpins ?? 0), 1000000000),
       totalWon: clampMoney(Number(data.totalWon ?? 0)),
       biggestWin: clampMoney(Number(data.biggestWin ?? 0)),
+      lastDailyBonusAtMs: extractMillis(data.lastDailyBonusAt),
+      dailyBonusStreak: clampInt(Number(data.dailyBonusStreak ?? 0), 10000),
     };
     return { profile, isNewAccount: false };
   }
@@ -107,11 +175,14 @@ export async function ensurePlayerVault(
     totalSpins: 0,
     totalWon: 0,
     biggestWin: 0,
+    lastDailyBonusAtMs: null,
+    dailyBonusStreak: 0,
   };
 
   try {
+    const { lastDailyBonusAtMs: _omit, ...docFields } = initialProfile;
     await setDoc(ref, {
-      ...initialProfile,
+      ...docFields,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -120,6 +191,62 @@ export async function ensurePlayerVault(
   }
 
   return { profile: initialProfile, isNewAccount: true };
+}
+
+export async function claimDailyLoginBonus(
+  uid: string,
+): Promise<DailyBonusClaimResult> {
+  const path = `players/${uid}`;
+  const ref = doc(db, 'players', uid);
+
+  try {
+    return await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) {
+        throw new Error('Player vault document not found.');
+      }
+
+      const data = snap.data();
+      const currentBalance = clampMoney(Number(data.balance ?? 0));
+      const currentStreak = clampInt(Number(data.dailyBonusStreak ?? 0), 10000);
+      const lastClaimMs = extractMillis(data.lastDailyBonusAt);
+      const nowMs = Date.now();
+      const status = getDailyBonusStatus(lastClaimMs, currentStreak, nowMs);
+
+      if (!status.eligible) {
+        return {
+          claimed: false,
+          rewardAmount: 0,
+          newBalance: currentBalance,
+          streak: currentStreak,
+          lastDailyBonusAtMs: lastClaimMs,
+        };
+      }
+
+      const newBalance = clampMoney(currentBalance + status.rewardAmount);
+      const actualReward = Math.max(
+        0,
+        Math.round((newBalance - currentBalance) * 100) / 100,
+      );
+
+      tx.update(ref, {
+        balance: newBalance,
+        lastDailyBonusAt: serverTimestamp(),
+        dailyBonusStreak: status.nextStreak,
+        updatedAt: serverTimestamp(),
+      });
+
+      return {
+        claimed: true,
+        rewardAmount: actualReward,
+        newBalance,
+        streak: status.nextStreak,
+        lastDailyBonusAtMs: nowMs,
+      };
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
 }
 
 export async function syncPlayerVault(
@@ -145,4 +272,24 @@ export async function syncPlayerVault(
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
+}
+
+export async function updatePlayerDisplayName(
+  uid: string,
+  displayName: string,
+): Promise<string> {
+  const path = `players/${uid}`;
+  const ref = doc(db, 'players', uid);
+  const cleaned = sanitizeDisplayName(displayName);
+
+  try {
+    await updateDoc(ref, {
+      displayName: cleaned,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+
+  return cleaned;
 }

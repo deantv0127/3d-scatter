@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, User } from 'firebase/auth';
+import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import {
   ChevronDown,
   ChevronUp,
+  Gift,
   HelpCircle,
   LogIn,
+  LogOut,
   Mic,
   MicOff,
   Minus,
@@ -13,12 +15,15 @@ import {
   RefreshCw,
   Repeat,
   RotateCw,
+  Settings,
   UserCheck,
   Volume2,
   VolumeX,
   Zap,
 } from 'lucide-react';
+import { motion } from 'motion/react';
 import { AuthModal } from './components/AuthModal';
+import { DailyBonusModal } from './components/DailyBonusModal';
 import { FreeSpinSummaryModal } from './components/FreeSpinSummaryModal';
 import { PaytableModal } from './components/PaytableModal';
 import { TitleOverlay } from './components/TitleOverlay';
@@ -26,9 +31,13 @@ import { auth } from './firebase';
 import { soundEngine } from './game/audio';
 import { CardSlotStage } from './game/CardSlotStage';
 import {
+  claimDailyLoginBonus,
+  DAILY_BONUS_COOLDOWN_MS,
   ensurePlayerVault,
+  getDailyBonusStatus,
   PlayerVaultProfile,
   syncPlayerVault,
+  updatePlayerDisplayName,
 } from './game/playerVault';
 import { resolveSpinOutcome } from './game/slotEngine';
 import {
@@ -48,6 +57,16 @@ interface WinBannerState {
   isBig: boolean;
 }
 
+function formatBonusCountdown(msRemaining: number): string {
+  const totalMinutes = Math.max(1, Math.ceil(msRemaining / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  return `${minutes}m`;
+}
+
 export default function App() {
   const canvasMountRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<CardSlotStage | null>(null);
@@ -62,6 +81,7 @@ export default function App() {
   const [musicEnabled, setMusicEnabled] = useState<boolean>(true);
   const [voiceEnabled, setVoiceEnabled] = useState<boolean>(true);
   const [dockCollapsed, setDockCollapsed] = useState<boolean>(false);
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [showPaytable, setShowPaytable] = useState<boolean>(false);
   const [contextLost, setContextLost] = useState<boolean>(false);
 
@@ -73,6 +93,11 @@ export default function App() {
     open: boolean;
     mode: 'login' | 'signup';
   }>({ open: false, mode: 'login' });
+  const [dailyBonusAward, setDailyBonusAward] = useState<{
+    amount: number;
+    streak: number;
+  } | null>(null);
+  const [menuNowMs, setMenuNowMs] = useState<number>(() => Date.now());
   const [fatalError, setFatalError] = useState<Error | null>(null);
 
   // Grid Window Cascade Multiplier Progression (2x, 3x, 4x, 6x, 10x)
@@ -109,6 +134,7 @@ export default function App() {
     showPaytable,
     freeSpinSummary,
     authModalOpen: authModal.open,
+    dailyBonusOpen: dailyBonusAward !== null,
   });
   stateRef.current = {
     phase,
@@ -121,10 +147,13 @@ export default function App() {
     showPaytable,
     freeSpinSummary,
     authModalOpen: authModal.open,
+    dailyBonusOpen: dailyBonusAward !== null,
   };
 
   const userRef = useRef<User | null>(null);
+  const pendingDisplayNameRef = useRef<string>('');
   const hadSignedInRef = useRef<boolean>(false);
+  const claimingDailyRef = useRef<boolean>(false);
   const balanceRef = useRef<number>(2500);
   const statsRef = useRef<{
     totalSpins: number;
@@ -136,8 +165,23 @@ export default function App() {
   const freeSpinsPlayedRef = useRef<number>(0);
   const bonusCollectedRef = useRef<boolean>(false);
   const mountedRef = useRef<boolean>(true);
+  const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const inspectTimeoutRef = useRef<number | null>(null);
   const winAnimRef = useRef<number | null>(null);
+  const prevBalanceRef = useRef<number>(2500);
+  const [balancePop, setBalancePop] = useState<{
+    seq: number;
+    dir: 'up' | 'down';
+  } | null>(null);
+
+  useEffect(() => {
+    const prev = prevBalanceRef.current;
+    if (Math.abs(balance - prev) > 0.001) {
+      const dir = balance > prev ? 'up' : 'down';
+      prevBalanceRef.current = balance;
+      setBalancePop((curr) => ({ seq: (curr?.seq ?? 0) + 1, dir }));
+    }
+  }, [balance]);
 
   if (fatalError) {
     throw fatalError;
@@ -236,6 +280,7 @@ export default function App() {
 
       if (!nextUser) {
         setPlayerProfile(null);
+        setDailyBonusAward(null);
         setAuthLoading(false);
         if (hadSignedInRef.current) {
           hadSignedInRef.current = false;
@@ -248,6 +293,14 @@ export default function App() {
           setFreeSpinsLeft(0);
           setFreeSpinPot(0);
           setFreeSpinSummary(null);
+          setActiveCascadeIndex(-1);
+          setBonusBannerText(null);
+          setWinBanner({
+            visible: false,
+            label: '',
+            amount: 0,
+            isBig: false,
+          });
           setLastWin(0);
           setDisplayWin(0);
         }
@@ -263,6 +316,12 @@ export default function App() {
           freeSpinsPlayed: freeSpinsPlayedRef.current,
         });
         if (!active) return;
+        const chosenName = pendingDisplayNameRef.current.trim();
+        pendingDisplayNameRef.current = '';
+        if (isNewAccount && chosenName && profile.displayName !== chosenName) {
+          profile.displayName = chosenName;
+          void updatePlayerDisplayName(nextUser.uid, chosenName);
+        }
         setPlayerProfile(profile);
         statsRef.current = {
           totalSpins: profile.totalSpins,
@@ -284,6 +343,42 @@ export default function App() {
               totalWin: profile.freeSpinPot,
               spinsPlayed: Math.max(1, profile.freeSpinsPlayed),
             });
+          }
+        }
+
+        const bonusDue =
+          profile.lastDailyBonusAtMs === null ||
+          Date.now() - profile.lastDailyBonusAtMs >= DAILY_BONUS_COOLDOWN_MS;
+
+        if (bonusDue && !claimingDailyRef.current) {
+          claimingDailyRef.current = true;
+          try {
+            const result = await claimDailyLoginBonus(nextUser.uid);
+            if (!active) return;
+            if (result.claimed && result.rewardAmount > 0) {
+              const updatedBalance = stateRef.current.isSpinning
+                ? Math.round((balanceRef.current + result.rewardAmount) * 100) / 100
+                : result.newBalance;
+              balanceRef.current = updatedBalance;
+              setBalance(updatedBalance);
+              setPlayerProfile((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      balance: updatedBalance,
+                      dailyBonusStreak: result.streak,
+                      lastDailyBonusAtMs: result.lastDailyBonusAtMs,
+                    }
+                  : prev,
+              );
+              soundEngine.playBonusTrigger();
+              setDailyBonusAward({
+                amount: result.rewardAmount,
+                streak: result.streak,
+              });
+            }
+          } finally {
+            claimingDailyRef.current = false;
           }
         }
       } catch (err) {
@@ -348,7 +443,8 @@ export default function App() {
       s.phase !== 'playing' ||
       s.showPaytable ||
       s.freeSpinSummary !== null ||
-      s.authModalOpen
+      s.authModalOpen ||
+      s.dailyBonusOpen
     ) {
       return;
     }
@@ -510,7 +606,8 @@ export default function App() {
       phase !== 'playing' ||
       showPaytable ||
       freeSpinSummary !== null ||
-      authModal.open
+      authModal.open ||
+      dailyBonusAward !== null
     ) {
       return;
     }
@@ -532,6 +629,7 @@ export default function App() {
     showPaytable,
     freeSpinSummary,
     authModal.open,
+    dailyBonusAward,
     freeSpinsLeft,
     autoPlay,
     balance,
@@ -543,7 +641,9 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const s = stateRef.current;
-      if (s.freeSpinSummary !== null || s.authModalOpen) return;
+      if (s.freeSpinSummary !== null || s.authModalOpen || s.dailyBonusOpen) {
+        return;
+      }
       if (e.code === 'Space' || e.code === 'Enter') {
         if (s.phase === 'title') {
           e.preventDefault();
@@ -563,12 +663,34 @@ export default function App() {
           setDockCollapsed((v) => !v);
         }
       } else if (e.key === 'Escape') {
+        setSettingsOpen(false);
         setShowPaytable(false);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [executeSpin, handleStartGame]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    setMenuNowMs(Date.now());
+    const interval = window.setInterval(() => {
+      setMenuNowMs(Date.now());
+    }, 30000);
+    const onPointerDown = (e: PointerEvent) => {
+      if (
+        settingsMenuRef.current &&
+        !settingsMenuRef.current.contains(e.target as Node)
+      ) {
+        setSettingsOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [settingsOpen]);
 
   const handleToggleMute = () => {
     setMuted(soundEngine.toggleMute());
@@ -581,6 +703,71 @@ export default function App() {
   const handleToggleVoice = () => {
     setVoiceEnabled(soundEngine.toggleVoice());
   };
+
+  const handleClaimDailyBonus = useCallback(async () => {
+    soundEngine.playClick();
+    setSettingsOpen(false);
+
+    const currentUser = userRef.current;
+    if (!currentUser) {
+      setAuthModal({ open: true, mode: 'login' });
+      return;
+    }
+
+    if (claimingDailyRef.current) return;
+    claimingDailyRef.current = true;
+    try {
+      const result = await claimDailyLoginBonus(currentUser.uid);
+      if (!mountedRef.current) return;
+      if (result.claimed && result.rewardAmount > 0) {
+        const updatedBalance = stateRef.current.isSpinning
+          ? Math.round((balanceRef.current + result.rewardAmount) * 100) / 100
+          : result.newBalance;
+        balanceRef.current = updatedBalance;
+        setBalance(updatedBalance);
+        setPlayerProfile((prev) =>
+          prev
+            ? {
+                ...prev,
+                balance: updatedBalance,
+                dailyBonusStreak: result.streak,
+                lastDailyBonusAtMs: result.lastDailyBonusAtMs,
+              }
+            : prev,
+        );
+        soundEngine.playBonusTrigger();
+        setDailyBonusAward({
+          amount: result.rewardAmount,
+          streak: result.streak,
+        });
+      }
+    } catch (err) {
+      if (mountedRef.current) {
+        setFatalError(
+          err instanceof Error ? err : new Error(String(err)),
+        );
+      }
+    } finally {
+      claimingDailyRef.current = false;
+    }
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    soundEngine.playClick();
+    setAutoPlay(false);
+    setSettingsOpen(false);
+    setDailyBonusAward(null);
+    setAuthModal((prev) => ({ ...prev, open: false }));
+    try {
+      await signOut(auth);
+    } catch (err) {
+      if (mountedRef.current) {
+        setFatalError(
+          err instanceof Error ? err : new Error(String(err)),
+        );
+      }
+    }
+  }, []);
 
   const handleStepBet = (dir: -1 | 1) => {
     if (isSpinning || freeSpinsLeft > 0 || freeSpinSummary !== null) return;
@@ -603,13 +790,23 @@ export default function App() {
     !isSpinning &&
     freeSpinSummary === null &&
     !authModal.open &&
+    dailyBonusAward === null &&
     (freeSpinsLeft > 0 || balance >= currentBet);
   const needsRefill =
     !isSpinning &&
     freeSpinSummary === null &&
     !authModal.open &&
+    dailyBonusAward === null &&
     freeSpinsLeft === 0 &&
     balance < currentBet;
+
+  const dailyBonusStatus = playerProfile
+    ? getDailyBonusStatus(
+        playerProfile.lastDailyBonusAtMs,
+        playerProfile.dailyBonusStreak,
+        menuNowMs,
+      )
+    : null;
 
   const clampedTierIdx = Math.min(
     activeCascadeIndex,
@@ -653,6 +850,7 @@ export default function App() {
             soundEngine.playClick();
             setAuthModal({ open: true, mode });
           }}
+          onLogout={() => void handleLogout()}
         />
       )}
 
@@ -668,9 +866,28 @@ export default function App() {
                   <div className="text-[10px] uppercase tracking-wider text-stone-400 leading-none">
                     Balance
                   </div>
-                  <div className="font-mono-num text-sm sm:text-base font-bold text-stone-100 mt-1 leading-none">
+                  <motion.div
+                    key={balancePop?.seq ?? 0}
+                    initial={balancePop ? { scale: 1 } : false}
+                    animate={
+                      balancePop
+                        ? balancePop.dir === 'up'
+                          ? {
+                              scale: [1, 1.16, 1],
+                              color: ['#f5f5f4', '#6ee7b7', '#f5f5f4'],
+                            }
+                          : { scale: [1, 0.96, 1] }
+                        : undefined
+                    }
+                    transition={{
+                      duration: balancePop?.dir === 'up' ? 0.38 : 0.22,
+                      times: balancePop?.dir === 'up' ? [0, 0.35, 1] : [0, 0.4, 1],
+                      ease: 'easeOut',
+                    }}
+                    className="origin-left font-mono-num text-sm sm:text-base font-bold text-stone-100 mt-1 leading-none inline-block"
+                  >
                     ${balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </div>
+                  </motion.div>
                 </div>
 
                 <div className="sm:hidden flex items-center gap-2.5">
@@ -713,117 +930,255 @@ export default function App() {
                 )}
               </div>
 
-              {/* Right Utility & Audio Controls (>= 44px touch targets) */}
-              <div className="pointer-events-auto flex items-center gap-1 sm:gap-1.5">
+              {/* Compact Settings Dropdown Trigger (>= 44px touch target) */}
+              <div
+                ref={settingsMenuRef}
+                className="pointer-events-auto relative shrink-0"
+              >
                 <button
                   type="button"
                   onClick={() => {
                     soundEngine.playClick();
-                    setTurboMode((v) => !v);
+                    setSettingsOpen((v) => !v);
                   }}
-                  aria-label="Toggle turbo spin speed"
-                  aria-pressed={turboMode}
-                  title="Turbo Spin (T)"
-                  className={`min-w-[44px] min-h-[44px] px-2.5 flex items-center justify-center gap-1.5 rounded-xl border text-xs font-medium transition-colors cursor-pointer ${
-                    turboMode
-                      ? 'bg-amber-500/20 border-amber-400/60 text-amber-300'
-                      : 'bg-[#0b101b]/92 border-white/15 text-stone-300 hover:text-white'
+                  aria-label="Open settings menu"
+                  aria-expanded={settingsOpen}
+                  aria-haspopup="menu"
+                  className={`min-w-[44px] min-h-[44px] px-3 flex items-center justify-center gap-2 rounded-xl border text-xs font-semibold transition-colors cursor-pointer ${
+                    settingsOpen
+                      ? 'bg-amber-500/20 border-amber-400/60 text-amber-200'
+                      : 'bg-[#0b101b]/92 border-amber-400/25 text-stone-200 hover:border-amber-400/50 hover:text-white'
                   }`}
                 >
-                  <Zap className="w-4 h-4" />
-                  <span className="hidden md:inline">Turbo</span>
+                  <Settings className="w-4 h-4 text-amber-300" />
+                  <span className="hidden sm:inline">Menu</span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={handleToggleMusic}
-                  aria-label={musicEnabled ? 'Disable slot music' : 'Enable slot music'}
-                  aria-pressed={musicEnabled}
-                  title="Background Music"
-                  className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl border transition-colors cursor-pointer ${
-                    musicEnabled && !muted
-                      ? 'bg-amber-500/15 border-amber-400/45 text-amber-300'
-                      : 'bg-[#0b101b]/92 border-white/15 text-stone-500 hover:text-stone-300'
-                  }`}
-                >
-                  <Music className="w-4 h-4" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleToggleVoice}
-                  aria-label={voiceEnabled ? 'Disable voice announcer' : 'Enable voice announcer'}
-                  aria-pressed={voiceEnabled}
-                  title="Voice Announcer"
-                  className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl border transition-colors cursor-pointer ${
-                    voiceEnabled && !muted
-                      ? 'bg-amber-500/15 border-amber-400/45 text-amber-300'
-                      : 'bg-[#0b101b]/92 border-white/15 text-stone-500 hover:text-stone-300'
-                  }`}
-                >
-                  {voiceEnabled && !muted ? (
-                    <Mic className="w-4 h-4" />
-                  ) : (
-                    <MicOff className="w-4 h-4" />
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEngine.playClick();
-                    setShowPaytable(true);
-                  }}
-                  aria-label="Open paytable and rules"
-                  title="Paytable"
-                  className="min-w-[44px] min-h-[44px] px-2.5 flex items-center justify-center gap-1.5 rounded-xl bg-[#0b101b]/92 border border-white/15 text-stone-300 hover:text-white transition-colors cursor-pointer"
-                >
-                  <HelpCircle className="w-4 h-4" />
-                  <span className="hidden md:inline text-xs font-medium">Rules</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleToggleMute}
-                  aria-label={muted ? 'Unmute all audio' : 'Mute all audio'}
-                  title="Mute All (M)"
-                  className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-[#0b101b]/92 border border-white/15 text-stone-300 hover:text-white transition-colors cursor-pointer"
-                >
-                  {muted ? (
-                    <VolumeX className="w-4 h-4 text-rose-400" />
-                  ) : (
-                    <Volume2 className="w-4 h-4 text-emerald-300" />
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEngine.playClick();
-                    setAuthModal({ open: true, mode: 'login' });
-                  }}
-                  aria-label={user ? 'Open player account' : 'Log in or sign up'}
-                  title={user ? 'Player Vault' : 'Log In / Sign Up'}
-                  className={`min-w-[44px] min-h-[44px] px-2.5 flex items-center justify-center gap-1.5 rounded-xl border text-xs font-medium transition-colors cursor-pointer ${
-                    user
-                      ? 'bg-emerald-500/15 border-emerald-400/45 text-emerald-200'
-                      : 'bg-[#0b101b]/92 border-amber-400/35 text-amber-200 hover:bg-amber-500/15'
-                  }`}
-                >
-                  {user ? (
-                    <>
-                      <UserCheck className="w-4 h-4 shrink-0" />
-                      <span className="hidden md:inline max-w-[96px] truncate">
-                        {playerProfile?.displayName || user.displayName || 'Vault'}
+                {settingsOpen && (
+                  <div
+                    role="menu"
+                    aria-label="Game settings and account"
+                    className="absolute right-0 top-full mt-2 w-64 rounded-2xl bg-[#0c111b] border border-amber-400/35 shadow-2xl p-2 space-y-1 z-30"
+                  >
+                    {/* Account / Vault */}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        soundEngine.playClick();
+                        setSettingsOpen(false);
+                        setAuthModal({ open: true, mode: 'login' });
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2 rounded-xl hover:bg-white/8 flex items-center justify-between gap-2 text-left transition-colors cursor-pointer"
+                    >
+                      <span className="flex items-center gap-2.5 min-w-0">
+                        {user ? (
+                          <UserCheck className="w-4 h-4 text-emerald-300 shrink-0" />
+                        ) : (
+                          <LogIn className="w-4 h-4 text-amber-300 shrink-0" />
+                        )}
+                        <span className="text-xs font-semibold text-stone-100 truncate">
+                          {user
+                            ? playerProfile?.displayName ||
+                              user.displayName ||
+                              'Player Vault'
+                            : 'Log In / Sign Up'}
+                        </span>
                       </span>
-                    </>
-                  ) : (
-                    <>
-                      <LogIn className="w-4 h-4 shrink-0" />
-                      <span className="hidden md:inline">Log In</span>
-                    </>
-                  )}
-                </button>
+                      <span className="text-[11px] font-medium text-amber-300 shrink-0">
+                        {user ? 'Vault' : 'Account'}
+                      </span>
+                    </button>
+
+                    {/* Daily Login Bonus */}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={Boolean(user && dailyBonusStatus && !dailyBonusStatus.eligible)}
+                      onClick={() => void handleClaimDailyBonus()}
+                      className="w-full min-h-[44px] px-3 py-2 rounded-xl hover:bg-white/8 disabled:hover:bg-transparent flex items-center justify-between gap-2 text-left transition-colors cursor-pointer disabled:cursor-default"
+                    >
+                      <span className="flex items-center gap-2.5 min-w-0">
+                        <Gift
+                          className={`w-4 h-4 shrink-0 ${
+                            !user || dailyBonusStatus?.eligible
+                              ? 'text-amber-300'
+                              : 'text-stone-400'
+                          }`}
+                        />
+                        <span className="text-xs font-medium text-stone-200 truncate">
+                          Daily Bonus
+                        </span>
+                      </span>
+                      {!user ? (
+                        <span className="text-[11px] font-medium text-amber-300 shrink-0">
+                          Sign in
+                        </span>
+                      ) : dailyBonusStatus?.eligible ? (
+                        <span className="font-mono-num text-[11px] font-bold text-emerald-300 shrink-0">
+                          Claim +${dailyBonusStatus.rewardAmount}
+                        </span>
+                      ) : (
+                        <span className="font-mono-num text-[11px] text-stone-400 shrink-0">
+                          {dailyBonusStatus
+                            ? `In ${formatBonusCountdown(dailyBonusStatus.msRemaining)}`
+                            : 'Claimed'}
+                        </span>
+                      )}
+                    </button>
+
+                    <div className="my-1 border-t border-white/10" />
+
+                    {/* Turbo Mode */}
+                    <button
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={turboMode}
+                      onClick={() => {
+                        soundEngine.playClick();
+                        setTurboMode((v) => !v);
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2 rounded-xl hover:bg-white/8 flex items-center justify-between gap-2 text-left transition-colors cursor-pointer"
+                    >
+                      <span className="flex items-center gap-2.5 text-xs font-medium text-stone-200">
+                        <Zap
+                          className={`w-4 h-4 ${
+                            turboMode ? 'text-amber-300' : 'text-stone-400'
+                          }`}
+                        />
+                        <span>Turbo Spin</span>
+                      </span>
+                      <span
+                        className={`text-[11px] font-semibold ${
+                          turboMode ? 'text-amber-300' : 'text-stone-500'
+                        }`}
+                      >
+                        {turboMode ? 'On' : 'Off'}
+                      </span>
+                    </button>
+
+                    {/* Background Music */}
+                    <button
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={musicEnabled && !muted}
+                      onClick={handleToggleMusic}
+                      className="w-full min-h-[44px] px-3 py-2 rounded-xl hover:bg-white/8 flex items-center justify-between gap-2 text-left transition-colors cursor-pointer"
+                    >
+                      <span className="flex items-center gap-2.5 text-xs font-medium text-stone-200">
+                        <Music
+                          className={`w-4 h-4 ${
+                            musicEnabled && !muted
+                              ? 'text-amber-300'
+                              : 'text-stone-400'
+                          }`}
+                        />
+                        <span>Casino Music</span>
+                      </span>
+                      <span
+                        className={`text-[11px] font-semibold ${
+                          musicEnabled && !muted
+                            ? 'text-amber-300'
+                            : 'text-stone-500'
+                        }`}
+                      >
+                        {musicEnabled ? 'On' : 'Off'}
+                      </span>
+                    </button>
+
+                    {/* Voice Announcer */}
+                    <button
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={voiceEnabled && !muted}
+                      onClick={handleToggleVoice}
+                      className="w-full min-h-[44px] px-3 py-2 rounded-xl hover:bg-white/8 flex items-center justify-between gap-2 text-left transition-colors cursor-pointer"
+                    >
+                      <span className="flex items-center gap-2.5 text-xs font-medium text-stone-200">
+                        {voiceEnabled && !muted ? (
+                          <Mic className="w-4 h-4 text-amber-300" />
+                        ) : (
+                          <MicOff className="w-4 h-4 text-stone-400" />
+                        )}
+                        <span>Voice Callouts</span>
+                      </span>
+                      <span
+                        className={`text-[11px] font-semibold ${
+                          voiceEnabled && !muted
+                            ? 'text-amber-300'
+                            : 'text-stone-500'
+                        }`}
+                      >
+                        {voiceEnabled ? 'On' : 'Off'}
+                      </span>
+                    </button>
+
+                    {/* Master Sound / Mute */}
+                    <button
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={!muted}
+                      onClick={handleToggleMute}
+                      className="w-full min-h-[44px] px-3 py-2 rounded-xl hover:bg-white/8 flex items-center justify-between gap-2 text-left transition-colors cursor-pointer"
+                    >
+                      <span className="flex items-center gap-2.5 text-xs font-medium text-stone-200">
+                        {muted ? (
+                          <VolumeX className="w-4 h-4 text-rose-400" />
+                        ) : (
+                          <Volume2 className="w-4 h-4 text-emerald-300" />
+                        )}
+                        <span>Master Audio</span>
+                      </span>
+                      <span
+                        className={`text-[11px] font-semibold ${
+                          muted ? 'text-rose-400' : 'text-emerald-300'
+                        }`}
+                      >
+                        {muted ? 'Muted' : 'Active'}
+                      </span>
+                    </button>
+
+                    <div className="my-1 border-t border-white/10" />
+
+                    {/* Paytable & Rules */}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        soundEngine.playClick();
+                        setSettingsOpen(false);
+                        setShowPaytable(true);
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2 rounded-xl hover:bg-white/8 flex items-center justify-between gap-2 text-left transition-colors cursor-pointer"
+                    >
+                      <span className="flex items-center gap-2.5 text-xs font-medium text-stone-200">
+                        <HelpCircle className="w-4 h-4 text-amber-300" />
+                        <span>Paytable & Rules</span>
+                      </span>
+                      <span className="text-[11px] text-stone-400">View</span>
+                    </button>
+
+                    {user && (
+                      <>
+                        <div className="my-1 border-t border-white/10" />
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => void handleLogout()}
+                          className="w-full min-h-[44px] px-3 py-2 rounded-xl hover:bg-rose-500/15 flex items-center justify-between gap-2 text-left transition-colors cursor-pointer"
+                        >
+                          <span className="flex items-center gap-2.5 text-xs font-semibold text-rose-200">
+                            <LogOut className="w-4 h-4 text-rose-300" />
+                            <span>Log Out</span>
+                          </span>
+                          <span className="text-[11px] text-rose-300/80">
+                            Sign out
+                          </span>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </header>
 
@@ -1070,10 +1425,22 @@ export default function App() {
           user={user}
           profile={playerProfile}
           initialMode={authModal.mode}
+          onPrepareSignupName={(name) => {
+            pendingDisplayNameRef.current = name;
+          }}
           onClose={() => {
             soundEngine.playClick();
             setAuthModal((prev) => ({ ...prev, open: false }));
           }}
+        />
+      )}
+
+      {/* Daily Login Bonus Celebration Modal */}
+      {dailyBonusAward !== null && (
+        <DailyBonusModal
+          rewardAmount={dailyBonusAward.amount}
+          streak={dailyBonusAward.streak}
+          onClose={() => setDailyBonusAward(null)}
         />
       )}
     </div>

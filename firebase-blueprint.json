@@ -51,6 +51,15 @@
           "type": "number",
           "description": "Largest single spin or bonus round payout."
         },
+        "lastDailyBonusAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last claimed 24-hour daily login bonus."
+        },
+        "dailyBonusStreak": {
+          "type": "integer",
+          "description": "Consecutive daily login bonus streak count."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",

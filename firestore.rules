@@ -23,10 +23,8 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isVerifiedOwner(userId) {
-      return isSignedIn()
-        && request.auth.token.email_verified == true
-        && request.auth.uid == userId;
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
     }
 
     function isValidPlayerProfile(data, userId) {
@@ -54,6 +52,8 @@ service cloud.firestore {
         'totalSpins',
         'totalWon',
         'biggestWin',
+        'lastDailyBonusAt',
+        'dailyBonusStreak',
         'createdAt',
         'updatedAt'
       ])
@@ -82,27 +82,31 @@ service cloud.firestore {
       && data.totalWon >= 0
       && data.biggestWin is number
       && data.biggestWin >= 0
+      && (!('lastDailyBonusAt' in data) || data.lastDailyBonusAt is timestamp)
+      && (!('dailyBonusStreak' in data) || (data.dailyBonusStreak is int && data.dailyBonusStreak >= 0 && data.dailyBonusStreak <= 10000))
       && data.createdAt is timestamp
       && data.updatedAt is timestamp;
     }
 
     match /players/{userId} {
-      allow get: if isValidId(userId) && isVerifiedOwner(userId);
+      allow get: if isValidId(userId) && isOwner(userId);
       allow list: if false;
 
       allow create: if isValidId(userId)
-        && isVerifiedOwner(userId)
+        && isOwner(userId)
         && isValidPlayerProfile(incoming(), userId)
+        && (!('lastDailyBonusAt' in incoming()) || incoming().lastDailyBonusAt == request.time)
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
 
       allow update: if isValidId(userId)
-        && isVerifiedOwner(userId)
+        && isOwner(userId)
         && isValidPlayerProfile(incoming(), userId)
         && incoming().uid == existing().uid
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
+          // Action 1: Sync game state (bankroll, free spins, stats)
           incoming().diff(existing()).affectedKeys().hasOnly([
             'balance',
             'freeSpinsLeft',
@@ -114,11 +118,26 @@ service cloud.firestore {
             'updatedAt'
           ])
           ||
+          // Action 2: Sync profile metadata
           incoming().diff(existing()).affectedKeys().hasOnly([
             'displayName',
             'photoUrl',
             'updatedAt'
           ])
+          ||
+          // Action 3: Claim 24-hour Daily Login Bonus (server-enforced cooldown & reward cap)
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'balance',
+              'lastDailyBonusAt',
+              'dailyBonusStreak',
+              'updatedAt'
+            ])
+            && incoming().lastDailyBonusAt == request.time
+            && (!('lastDailyBonusAt' in existing()) || request.time >= existing().lastDailyBonusAt + duration.value(24, 'h'))
+            && incoming().balance >= existing().balance
+            && incoming().balance <= existing().balance + 500
+          )
         );
 
       allow delete: if false;
