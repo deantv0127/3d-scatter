@@ -177,11 +177,13 @@ export const FreeSpinSummaryModal: React.FC<FreeSpinSummaryModalProps> = ({
                 totalWin > 0 ? 'text-amber-300' : 'text-stone-300'
               }`}
             >
-              $
               {displayAmount.toLocaleString('en-US', {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,
               })}
+              <span className="text-lg sm:text-xl font-semibold text-amber-200/85 ml-2">
+                coins
+              </span>
             </div>
 
             {/* Synchronized Roll-Up Progress Track */}
@@ -203,7 +205,7 @@ export const FreeSpinSummaryModal: React.FC<FreeSpinSummaryModalProps> = ({
           >
             {isComplete
               ? totalWin > 0
-                ? 'Collect to Balance'
+                ? 'Collect Coins'
                 : 'Continue'
               : 'Collect Now'}
           </button>

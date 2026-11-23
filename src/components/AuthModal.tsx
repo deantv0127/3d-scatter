@@ -259,10 +259,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </h2>
             <p className="text-xs text-stone-400 mt-0.5">
               {user
-                ? 'Cloud-synced bankroll and spin history'
+                ? 'Cloud-synced coin bankroll and spin history'
                 : mode === 'login'
-                  ? 'Log in to restore your saved balance and bonus progress'
-                  : 'Sign up to save your balance, free spins, and big wins'}
+                  ? 'Log in to restore your saved coins and bonus progress'
+                  : 'Sign up to claim 200 starter coins and save your progress'}
             </p>
           </div>
           <button
@@ -318,7 +318,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       Total Won
                     </div>
                     <div className="font-mono-num text-sm font-bold text-emerald-300 mt-1">
-                      ${profile.totalWon.toFixed(0)}
+                      {profile.totalWon.toFixed(0)} coins
                     </div>
                   </div>
                   <div className="p-3 rounded-xl bg-[#121927] border border-white/10">
@@ -326,7 +326,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       Best Win
                     </div>
                     <div className="font-mono-num text-sm font-bold text-amber-300 mt-1">
-                      ${profile.biggestWin.toFixed(2)}
+                      {profile.biggestWin.toFixed(2)} coins
                     </div>
                   </div>
                 </div>

@@ -76,20 +76,18 @@ export const DailyBonusModal: React.FC<DailyBonusModalProps> = ({
 
           <div className="my-5 w-full py-5 px-4 rounded-xl bg-[#070a11]/90 border border-amber-400/35 shadow-inner">
             <div className="text-[10px] uppercase tracking-[0.22em] text-stone-400 mb-1">
-              Credits Added
+              Coins Added
             </div>
             <div className="font-mono-num text-4xl sm:text-5xl font-extrabold text-amber-300 tracking-tight leading-none">
-              +$
-              {rewardAmount.toLocaleString('en-US', {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
+              +{rewardAmount.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+              <span className="text-xl sm:text-2xl font-semibold text-amber-200/85 ml-2">
+                coins
+              </span>
             </div>
 
             {/* 7-Day Streak Ladder */}
             <div className="mt-5 grid grid-cols-7 gap-1.5">
               {STREAK_DAYS.map((day) => {
-                const dayReward = 150 + (day - 1) * 50;
                 const isToday = day === activeLadderDay;
                 const isClaimed = day < activeLadderDay;
                 return (
@@ -107,7 +105,7 @@ export const DailyBonusModal: React.FC<DailyBonusModalProps> = ({
                       D{day}
                     </div>
                     <div className="font-mono-num text-[10px] font-bold mt-1 leading-none">
-                      ${dayReward}
+                      50c
                     </div>
                   </div>
                 );

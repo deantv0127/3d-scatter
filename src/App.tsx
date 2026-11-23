@@ -36,6 +36,7 @@ import {
   ensurePlayerVault,
   getDailyBonusStatus,
   PlayerVaultProfile,
+  SIGNUP_BONUS_COINS,
   syncPlayerVault,
   updatePlayerDisplayName,
 } from './game/playerVault';
@@ -49,6 +50,8 @@ import {
 } from './game/types';
 
 type GamePhase = 'title' | 'playing';
+
+const REFILL_COINS = 200;
 
 interface WinBannerState {
   visible: boolean;
@@ -72,8 +75,8 @@ export default function App() {
   const stageRef = useRef<CardSlotStage | null>(null);
 
   const [phase, setPhase] = useState<GamePhase>('title');
-  const [balance, setBalance] = useState<number>(2500);
-  const [betIndex, setBetIndex] = useState<number>(2); // $5 default
+  const [balance, setBalance] = useState<number>(SIGNUP_BONUS_COINS);
+  const [betIndex, setBetIndex] = useState<number>(1); // 2 coins default
   const [isSpinning, setIsSpinning] = useState<boolean>(false);
   const [turboMode, setTurboMode] = useState<boolean>(false);
   const [autoPlay, setAutoPlay] = useState<boolean>(false);
@@ -154,7 +157,7 @@ export default function App() {
   const pendingDisplayNameRef = useRef<string>('');
   const hadSignedInRef = useRef<boolean>(false);
   const claimingDailyRef = useRef<boolean>(false);
-  const balanceRef = useRef<number>(2500);
+  const balanceRef = useRef<number>(SIGNUP_BONUS_COINS);
   const statsRef = useRef<{
     totalSpins: number;
     totalWon: number;
@@ -168,7 +171,7 @@ export default function App() {
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const inspectTimeoutRef = useRef<number | null>(null);
   const winAnimRef = useRef<number | null>(null);
-  const prevBalanceRef = useRef<number>(2500);
+  const prevBalanceRef = useRef<number>(SIGNUP_BONUS_COINS);
   const [balancePop, setBalancePop] = useState<{
     seq: number;
     dir: 'up' | 'down';
@@ -284,8 +287,8 @@ export default function App() {
         setAuthLoading(false);
         if (hadSignedInRef.current) {
           hadSignedInRef.current = false;
-          balanceRef.current = 2500;
-          setBalance(2500);
+          balanceRef.current = SIGNUP_BONUS_COINS;
+          setBalance(SIGNUP_BONUS_COINS);
           freeSpinsLeftRef.current = 0;
           freeSpinPotRef.current = 0;
           freeSpinsPlayedRef.current = 0;
@@ -329,7 +332,10 @@ export default function App() {
           biggestWin: profile.biggestWin,
         };
 
-        if (!isNewAccount) {
+        if (isNewAccount) {
+          balanceRef.current = profile.balance;
+          setBalance(profile.balance);
+        } else {
           balanceRef.current = profile.balance;
           setBalance(profile.balance);
           freeSpinsLeftRef.current = profile.freeSpinsLeft;
@@ -780,7 +786,8 @@ export default function App() {
   const handleRefill = () => {
     soundEngine.unlock();
     soundEngine.playMultiplierHit(5);
-    const refilled = Math.round((balanceRef.current + 1000) * 100) / 100;
+    const refilled =
+      Math.round((balanceRef.current + REFILL_COINS) * 100) / 100;
     balanceRef.current = refilled;
     setBalance(refilled);
     persistVaultState({ balance: refilled });
@@ -886,7 +893,10 @@ export default function App() {
                     }}
                     className="origin-left font-mono-num text-sm sm:text-base font-bold text-stone-100 mt-1 leading-none inline-block"
                   >
-                    ${balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <span className="text-[11px] font-semibold text-amber-300/85 ml-1">
+                      coins
+                    </span>
                   </motion.div>
                 </div>
 
@@ -901,7 +911,10 @@ export default function App() {
                         lastWin > 0 ? 'text-emerald-300' : 'text-stone-400'
                       }`}
                     >
-                      ${displayWin.toFixed(2)}
+                      {displayWin.toFixed(2)}
+                      <span className="text-[10px] font-semibold ml-1 opacity-80">
+                        c
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -923,7 +936,10 @@ export default function App() {
                         Bonus Pot
                       </div>
                       <div className="font-mono-num text-sm sm:text-base font-bold text-amber-300 mt-1 leading-none">
-                        ${freeSpinPot.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {freeSpinPot.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        <span className="text-[11px] font-semibold text-amber-200/85 ml-1">
+                          coins
+                        </span>
                       </div>
                     </div>
                   </>
@@ -1016,7 +1032,7 @@ export default function App() {
                         </span>
                       ) : dailyBonusStatus?.eligible ? (
                         <span className="font-mono-num text-[11px] font-bold text-emerald-300 shrink-0">
-                          Claim +${dailyBonusStatus.rewardAmount}
+                          Claim +{dailyBonusStatus.rewardAmount} coins
                         </span>
                       ) : (
                         <span className="font-mono-num text-[11px] text-stone-400 shrink-0">
@@ -1250,7 +1266,10 @@ export default function App() {
                   {winBanner.label}
                 </div>
                 <div className="font-mono-num text-lg sm:text-2xl font-bold text-white leading-tight mt-0.5">
-                  +${winBanner.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  +{winBanner.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <span className="text-xs sm:text-sm font-semibold text-amber-300/90 ml-1.5">
+                    coins
+                  </span>
                 </div>
               </div>
             )}
@@ -1305,12 +1324,15 @@ export default function App() {
                     <Minus className="w-4 h-4" />
                   </button>
 
-                  <div className="min-w-[60px] sm:min-w-[74px] text-center">
+                  <div className="min-w-[68px] sm:min-w-[84px] text-center">
                     <div className="text-[10px] uppercase tracking-wider text-stone-400 leading-none">
                       Bet
                     </div>
                     <div className="font-mono-num text-sm sm:text-base font-bold text-amber-300 mt-1 leading-none">
-                      ${currentBet}
+                      {currentBet}
+                      <span className="text-[11px] font-semibold text-amber-200/80 ml-1">
+                        {currentBet === 1 ? 'coin' : 'coins'}
+                      </span>
                     </div>
                   </div>
 
@@ -1338,7 +1360,7 @@ export default function App() {
                       className="min-h-[48px] px-5 sm:px-7 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] text-stone-950 font-bold text-sm sm:text-base flex items-center gap-2 shadow-lg shadow-emerald-500/20 transition-all cursor-pointer"
                     >
                       <RefreshCw className="w-4 h-4" />
-                      <span>Refill $1,000</span>
+                      <span>Refill {REFILL_COINS} coins</span>
                     </button>
                   ) : (
                     <button
@@ -1390,7 +1412,10 @@ export default function App() {
                       lastWin > 0 ? 'text-emerald-300' : 'text-stone-400'
                     }`}
                   >
-                    ${displayWin.toFixed(2)}
+                    {displayWin.toFixed(2)}
+                    <span className="text-[11px] font-semibold ml-1 opacity-80">
+                      coins
+                    </span>
                   </div>
                 </div>
               </div>

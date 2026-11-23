@@ -127,7 +127,7 @@ class SoundEngine {
       this.stopSpeech();
     } else {
       this.unlock();
-      this.speak('Voice on', true);
+      this.speak('Voice announcer ready', true);
     }
     this.playClick();
     return this.voiceEnabled;
@@ -139,6 +139,10 @@ class SoundEngine {
 
   public unlock(): void {
     if (typeof window === 'undefined') return;
+    if ('speechSynthesis' in window) {
+      // Warm up OS/browser voice list early so graceful voices are available on first callout
+      window.speechSynthesis.getVoices();
+    }
     if (!this.ctx) {
       const AudioCtx =
         window.AudioContext ||
@@ -406,6 +410,42 @@ class SoundEngine {
     this.duckMusic(false);
   }
 
+  private pickGracefulVoice(
+    voices: SpeechSynthesisVoice[],
+  ): SpeechSynthesisVoice | undefined {
+    const english = voices.filter((v) => v.lang.toLowerCase().startsWith('en'));
+    if (english.length === 0) return undefined;
+
+    const scoreVoice = (v: SpeechSynthesisVoice): number => {
+      let score = 0;
+      const name = v.name;
+      const lang = v.lang.toLowerCase();
+      if (/Aria|Serena|Jenny|Ava|Emma|Sonia|Libby|Samantha|Victoria|Karen|Moira/i.test(name)) {
+        score += 50;
+      }
+      if (/Google UK English Female/i.test(name)) {
+        score += 45;
+      }
+      if (/Natural|Neural|Online|Enhanced|Premium/i.test(name)) {
+        score += 30;
+      }
+      if (/Google US English|Daniel|Arthur|Oliver/i.test(name)) {
+        score += 20;
+      }
+      if (lang === 'en-gb') {
+        score += 12;
+      } else if (lang === 'en-us') {
+        score += 8;
+      }
+      if (/eSpeak|Compact/i.test(name)) {
+        score -= 40;
+      }
+      return score;
+    };
+
+    return english.slice().sort((a, b) => scoreVoice(b) - scoreVoice(a))[0];
+  }
+
   private speak(text: string, interrupt = true): void {
     if (this.muted || !this.voiceEnabled) return;
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
@@ -417,21 +457,17 @@ class SoundEngine {
       }
 
       const utter = new SpeechSynthesisUtterance(text);
-      const voices = synth.getVoices();
-      const preferred =
-        voices.find(
-          (v) =>
-            v.lang.startsWith('en') &&
-            /Natural|Google|Samantha|Daniel|Arthur|Aria|Serena/i.test(v.name),
-        ) || voices.find((v) => v.lang.startsWith('en'));
+      const preferred = this.pickGracefulVoice(synth.getVoices());
 
       if (preferred) {
         utter.voice = preferred;
+        utter.lang = preferred.lang;
+      } else {
+        utter.lang = 'en-GB';
       }
-      utter.lang = 'en-US';
-      utter.rate = 1.12;
-      utter.pitch = 1.02;
-      utter.volume = 0.92;
+      utter.rate = 0.88;
+      utter.pitch = 0.98;
+      utter.volume = 0.84;
 
       this.duckMusic(true);
       if (this.voiceDuckTimeout) {
@@ -439,7 +475,7 @@ class SoundEngine {
       }
       this.voiceDuckTimeout = window.setTimeout(() => {
         this.duckMusic(false);
-      }, 1800);
+      }, 2400);
 
       utter.onend = () => {
         if (this.voiceDuckTimeout) {
@@ -459,11 +495,18 @@ class SoundEngine {
   }
 
   public announceMultiplier(tierMultiplier: number): void {
-    this.speak(`${tierMultiplier} times`, true);
+    const labelMap: Record<number, string> = {
+      2: 'Two times',
+      3: 'Three times',
+      4: 'Four times',
+      6: 'Six times',
+      10: 'Ten times. Sovereign.',
+    };
+    this.speak(labelMap[tierMultiplier] ?? `${tierMultiplier} times`, true);
   }
 
   public announceBonus(spinsAwarded: number): void {
-    this.speak(`${spinsAwarded} free spins`, true);
+    this.speak(`Bonus unlocked. ${spinsAwarded} free spins.`, true);
   }
 
   private createNoiseBuffer(ctx: AudioContext): AudioBuffer {

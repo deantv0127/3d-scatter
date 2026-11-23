@@ -9,6 +9,8 @@ import {
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 
+export const SIGNUP_BONUS_COINS = 200;
+export const DAILY_BONUS_COINS = 50;
 export const DAILY_BONUS_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 export const DAILY_BONUS_STREAK_RESET_MS = 48 * 60 * 60 * 1000;
 
@@ -105,9 +107,7 @@ export function getDailyBonusStatus(
       ? 1
       : Math.min(10000, safeStreak + 1);
 
-  // Day 1: $150 -> Day 7+: $450 (strictly within <= 500 server rule cap)
-  const tierIndex = Math.min(nextStreak, 7) - 1;
-  const rewardAmount = Math.min(450, 150 + tierIndex * 50);
+  const rewardAmount = DAILY_BONUS_COINS;
 
   return {
     eligible,
@@ -151,7 +151,7 @@ export async function ensurePlayerVault(
       photoUrl: sanitizePhotoUrl(
         typeof data.photoUrl === 'string' ? data.photoUrl : photoUrl,
       ),
-      balance: clampMoney(Number(data.balance ?? 2500)),
+      balance: clampMoney(Number(data.balance ?? SIGNUP_BONUS_COINS)),
       freeSpinsLeft: clampInt(Number(data.freeSpinsLeft ?? 0), 1000),
       freeSpinPot: clampMoney(Number(data.freeSpinPot ?? 0)),
       freeSpinsPlayed: clampInt(Number(data.freeSpinsPlayed ?? 0), 1000),
@@ -168,7 +168,9 @@ export async function ensurePlayerVault(
     uid: user.uid,
     displayName,
     ...(photoUrl ? { photoUrl } : {}),
-    balance: clampMoney(seed?.balance ?? 2500),
+    balance: clampMoney(
+      Math.max(SIGNUP_BONUS_COINS, seed?.balance ?? SIGNUP_BONUS_COINS),
+    ),
     freeSpinsLeft: clampInt(seed?.freeSpinsLeft ?? 0, 1000),
     freeSpinPot: clampMoney(seed?.freeSpinPot ?? 0),
     freeSpinsPlayed: clampInt(seed?.freeSpinsPlayed ?? 0, 1000),

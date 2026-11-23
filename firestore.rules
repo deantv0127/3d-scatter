@@ -136,7 +136,7 @@ service cloud.firestore {
             && incoming().lastDailyBonusAt == request.time
             && (!('lastDailyBonusAt' in existing()) || request.time >= existing().lastDailyBonusAt + duration.value(24, 'h'))
             && incoming().balance >= existing().balance
-            && incoming().balance <= existing().balance + 500
+            && incoming().balance <= existing().balance + 50
           )
         );
 
