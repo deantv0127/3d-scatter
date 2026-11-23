@@ -1,0 +1,284 @@
+import React, { useEffect, useState } from 'react';
+import { signInWithPopup, signOut, User } from 'firebase/auth';
+import { LogIn, LogOut, ShieldCheck, UserPlus, X } from 'lucide-react';
+import { auth, googleProvider } from '../firebase';
+import { PlayerVaultProfile } from '../game/playerVault';
+import { soundEngine } from '../game/audio';
+
+interface AuthModalProps {
+  user: User | null;
+  profile: PlayerVaultProfile | null;
+  initialMode?: 'login' | 'signup';
+  onClose: () => void;
+}
+
+export const AuthModal: React.FC<AuthModalProps> = ({
+  user,
+  profile,
+  initialMode = 'login',
+  onClose,
+}) => {
+  const [mode, setMode] = useState<'login' | 'signup'>(initialMode);
+  const [busy, setBusy] = useState<boolean>(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    setMode(initialMode);
+  }, [initialMode]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
+
+  const handleGoogleAuth = async () => {
+    if (busy) return;
+    soundEngine.playClick();
+    setBusy(true);
+    setErrorMsg(null);
+    try {
+      await signInWithPopup(auth, googleProvider);
+      onClose();
+    } catch (err) {
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: unknown }).code)
+          : '';
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        setErrorMsg('Sign-in popup was closed before completing.');
+      } else if (code === 'auth/popup-blocked') {
+        setErrorMsg('Popup was blocked by your browser. Please allow popups and try again.');
+      } else {
+        setErrorMsg(
+          err instanceof Error
+            ? err.message
+            : 'Unable to authenticate right now. Please try again.',
+        );
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    if (busy) return;
+    soundEngine.playClick();
+    setBusy(true);
+    setErrorMsg(null);
+    try {
+      await signOut(auth);
+      onClose();
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : 'Could not sign out cleanly.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/82"
+      role="dialog"
+      aria-modal="true"
+      aria-label={user ? 'Player Vault Account' : 'Login or Sign Up'}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl bg-[#0c111b] border border-amber-400/35 text-stone-100 shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+          <div>
+            <h2 className="font-display text-lg sm:text-xl font-bold text-amber-300">
+              {user
+                ? 'Player Vault'
+                : mode === 'login'
+                  ? 'Welcome Back'
+                  : 'Create Player Vault'}
+            </h2>
+            <p className="text-xs text-stone-400 mt-0.5">
+              {user
+                ? 'Cloud-synced bankroll and spin history'
+                : mode === 'login'
+                  ? 'Log in to restore your saved balance and bonus progress'
+                  : 'Sign up to save your balance, free spins, and big wins'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close account modal"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-stone-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-5">
+          {user ? (
+            <>
+              <div className="flex items-center gap-3.5 p-3.5 rounded-xl bg-[#121927] border border-amber-400/20">
+                {profile?.photoUrl || user.photoURL ? (
+                  <img
+                    src={profile?.photoUrl || user.photoURL || ''}
+                    alt={profile?.displayName || 'Player avatar'}
+                    referrerPolicy="no-referrer"
+                    className="w-12 h-12 rounded-xl object-cover border border-amber-400/40 shrink-0"
+                  />
+                ) : (
+                  <div className="w-12 h-12 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center font-display text-lg font-bold text-amber-300 shrink-0">
+                    {(profile?.displayName || user.displayName || 'P')
+                      .charAt(0)
+                      .toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <div className="font-semibold text-sm text-stone-100 truncate">
+                    {profile?.displayName || user.displayName || 'Player'}
+                  </div>
+                  <div className="text-xs text-stone-400 truncate mt-0.5">
+                    {user.email || 'Verified Google Account'}
+                  </div>
+                </div>
+              </div>
+
+              {profile && (
+                <div className="grid grid-cols-3 gap-2.5 text-center">
+                  <div className="p-3 rounded-xl bg-[#121927] border border-white/10">
+                    <div className="text-[10px] uppercase tracking-wider text-stone-400">
+                      Spins
+                    </div>
+                    <div className="font-mono-num text-sm font-bold text-stone-100 mt-1">
+                      {profile.totalSpins.toLocaleString('en-US')}
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[#121927] border border-white/10">
+                    <div className="text-[10px] uppercase tracking-wider text-stone-400">
+                      Total Won
+                    </div>
+                    <div className="font-mono-num text-sm font-bold text-emerald-300 mt-1">
+                      ${profile.totalWon.toFixed(0)}
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[#121927] border border-white/10">
+                    <div className="text-[10px] uppercase tracking-wider text-stone-400">
+                      Best Win
+                    </div>
+                    <div className="font-mono-num text-sm font-bold text-amber-300 mt-1">
+                      ${profile.biggestWin.toFixed(2)}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {errorMsg && (
+                <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-400/40 text-xs text-rose-200">
+                  {errorMsg}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => void handleSignOut()}
+                disabled={busy}
+                className="w-full min-h-[48px] px-5 rounded-xl bg-white/8 hover:bg-white/14 border border-white/15 text-stone-200 font-semibold text-sm flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>{busy ? 'Signing Out...' : 'Sign Out'}</span>
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Log In / Sign Up Mode Switcher */}
+              <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#070a10] border border-white/10">
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playClick();
+                    setMode('login');
+                    setErrorMsg(null);
+                  }}
+                  className={`min-h-[44px] rounded-lg text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                    mode === 'login'
+                      ? 'bg-amber-500 text-stone-950'
+                      : 'text-stone-300 hover:text-white'
+                  }`}
+                >
+                  <LogIn className="w-4 h-4" />
+                  <span>Log In</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playClick();
+                    setMode('signup');
+                    setErrorMsg(null);
+                  }}
+                  className={`min-h-[44px] rounded-lg text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                    mode === 'signup'
+                      ? 'bg-amber-500 text-stone-950'
+                      : 'text-stone-300 hover:text-white'
+                  }`}
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>Sign Up</span>
+                </button>
+              </div>
+
+              <div className="p-4 rounded-xl bg-[#121927] border border-amber-400/20 space-y-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-amber-300">
+                  <ShieldCheck className="w-4 h-4 shrink-0" />
+                  <span>
+                    {mode === 'login'
+                      ? 'Instant Google Vault Sign-In'
+                      : 'New Account Starts With $2,500+'}
+                  </span>
+                </div>
+                <p className="text-xs text-stone-300 leading-relaxed">
+                  {mode === 'login'
+                    ? 'Sign in with your Google account to sync your bankroll, unfinished free spins, and personal records across devices.'
+                    : 'Sign up with Google in one tap. Your current session balance carries over automatically into your private cloud vault.'}
+                </p>
+              </div>
+
+              {errorMsg && (
+                <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-400/40 text-xs text-rose-200">
+                  {errorMsg}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => void handleGoogleAuth()}
+                disabled={busy}
+                className="w-full min-h-[48px] px-5 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] disabled:opacity-50 text-stone-950 font-bold text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-lg shadow-amber-500/20 transition-all cursor-pointer"
+              >
+                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    fill="#1c1917"
+                    d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 5.44-6.5 5.44C8.36 19.27 5 16.25 5 12c0-4.1 3.2-7.27 7.2-7.27c3.09 0 4.9 1.97 4.9 1.97L19 4.72S16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12c0 5.05 4.13 10 10.22 10c5.35 0 9.25-3.67 9.25-9.09c0-1.15-.15-1.81-.15-1.81Z"
+                  />
+                </svg>
+                <span>
+                  {busy
+                    ? 'Connecting...'
+                    : mode === 'login'
+                      ? 'Log In with Google'
+                      : 'Sign Up with Google'}
+                </span>
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

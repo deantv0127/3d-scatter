@@ -1,10 +1,26 @@
 import React from 'react';
+import { User } from 'firebase/auth';
+import { LogIn, UserCheck, UserPlus } from 'lucide-react';
+import { PlayerVaultProfile } from '../game/playerVault';
 
 interface TitleOverlayProps {
   onStart: () => void;
+  user: User | null;
+  profile: PlayerVaultProfile | null;
+  authLoading: boolean;
+  onOpenAuth: (mode: 'login' | 'signup') => void;
 }
 
-export const TitleOverlay: React.FC<TitleOverlayProps> = ({ onStart }) => {
+export const TitleOverlay: React.FC<TitleOverlayProps> = ({
+  onStart,
+  user,
+  profile,
+  authLoading,
+  onOpenAuth,
+}) => {
+  const displayName =
+    profile?.displayName || user?.displayName || user?.email?.split('@')[0] || 'Player';
+
   return (
     <div className="absolute inset-0 z-20 flex flex-col items-center justify-between px-5 py-8 pointer-events-none">
       {/* Top quiet brand line */}
@@ -13,7 +29,7 @@ export const TitleOverlay: React.FC<TitleOverlayProps> = ({ onStart }) => {
       </div>
 
       {/* Center focal lockup over calm negative space */}
-      <div className="flex flex-col items-center text-center max-w-md px-6 py-7 rounded-2xl bg-[#070a10]/78 border border-amber-400/20 shadow-2xl pointer-events-auto">
+      <div className="flex flex-col items-center text-center max-w-md px-6 py-7 rounded-2xl bg-[#070a10]/82 border border-amber-400/20 shadow-2xl pointer-events-auto">
         <svg
           viewBox="0 0 360 88"
           className="w-72 sm:w-80 h-auto mb-3"
@@ -83,10 +99,52 @@ export const TitleOverlay: React.FC<TitleOverlayProps> = ({ onStart }) => {
         <button
           type="button"
           onClick={onStart}
-          className="min-h-[48px] px-9 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] text-stone-950 font-semibold text-base tracking-wide transition-all shadow-lg shadow-amber-500/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300 cursor-pointer"
+          className="w-full sm:w-auto min-h-[48px] px-10 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] text-stone-950 font-semibold text-base tracking-wide transition-all shadow-lg shadow-amber-500/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300 cursor-pointer"
         >
-          Deal Cards
+          {user ? 'Enter Vault Table' : 'Deal Cards'}
         </button>
+
+        {/* Auth Actions: Login / Sign Up or Signed-In Account Button */}
+        <div className="mt-4 w-full pt-4 border-t border-white/10">
+          {authLoading ? (
+            <div className="min-h-[44px] flex items-center justify-center text-xs text-stone-400">
+              Checking player vault...
+            </div>
+          ) : user ? (
+            <button
+              type="button"
+              onClick={() => onOpenAuth('login')}
+              className="w-full min-h-[44px] px-4 py-2 rounded-xl bg-white/6 hover:bg-white/12 border border-amber-400/30 text-xs sm:text-sm text-stone-200 flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            >
+              <UserCheck className="w-4 h-4 text-emerald-300 shrink-0" />
+              <span className="truncate font-medium">{displayName}</span>
+              {profile && (
+                <span className="font-mono-num text-amber-300 font-semibold shrink-0">
+                  · ${profile.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              )}
+            </button>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => onOpenAuth('login')}
+                className="min-h-[44px] px-3 py-2 rounded-xl bg-white/6 hover:bg-white/12 border border-white/15 text-xs sm:text-sm font-medium text-stone-200 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <LogIn className="w-4 h-4 text-amber-300" />
+                <span>Log In</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenAuth('signup')}
+                className="min-h-[44px] px-3 py-2 rounded-xl bg-white/6 hover:bg-white/12 border border-amber-400/35 text-xs sm:text-sm font-medium text-amber-200 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <UserPlus className="w-4 h-4 text-amber-300" />
+                <span>Sign Up</span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Flat single-line control hint */}

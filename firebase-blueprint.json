@@ -1,0 +1,88 @@
+{
+  "entities": {
+    "PlayerProfile": {
+      "title": "PlayerProfile",
+      "description": "Authenticated player bankroll, active free spin vault state, and lifetime slot statistics.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the owning player."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Display name shown in the player account menu."
+        },
+        "photoUrl": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "Optional avatar URL from Google Sign-In."
+        },
+        "balance": {
+          "type": "number",
+          "description": "Current player credit balance in USD."
+        },
+        "freeSpinsLeft": {
+          "type": "integer",
+          "description": "Remaining free spins in the current bonus round."
+        },
+        "freeSpinPot": {
+          "type": "number",
+          "description": "Accumulated bonus winnings waiting for end-of-bonus collection."
+        },
+        "freeSpinsPlayed": {
+          "type": "integer",
+          "description": "Number of free spins played in the current bonus round."
+        },
+        "totalSpins": {
+          "type": "integer",
+          "description": "Lifetime spins completed by the player."
+        },
+        "totalWon": {
+          "type": "number",
+          "description": "Lifetime cumulative winnings."
+        },
+        "biggestWin": {
+          "type": "number",
+          "description": "Largest single spin or bonus round payout."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the player profile was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last player state sync."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "balance",
+        "freeSpinsLeft",
+        "freeSpinPot",
+        "freeSpinsPlayed",
+        "totalSpins",
+        "totalWon",
+        "biggestWin",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/players/{userId}": {
+      "schema": {
+        "$ref": "#/entities/PlayerProfile"
+      },
+      "description": "Per-user private slot vault storing bankroll, active free spin pot state, and stats."
+    }
+  }
+}

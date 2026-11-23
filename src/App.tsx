@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { onAuthStateChanged, User } from 'firebase/auth';
 import {
   ChevronDown,
   ChevronUp,
   HelpCircle,
+  LogIn,
   Mic,
   MicOff,
   Minus,
@@ -11,15 +13,23 @@ import {
   RefreshCw,
   Repeat,
   RotateCw,
+  UserCheck,
   Volume2,
   VolumeX,
   Zap,
 } from 'lucide-react';
+import { AuthModal } from './components/AuthModal';
 import { FreeSpinSummaryModal } from './components/FreeSpinSummaryModal';
 import { PaytableModal } from './components/PaytableModal';
 import { TitleOverlay } from './components/TitleOverlay';
+import { auth } from './firebase';
 import { soundEngine } from './game/audio';
 import { CardSlotStage } from './game/CardSlotStage';
+import {
+  ensurePlayerVault,
+  PlayerVaultProfile,
+  syncPlayerVault,
+} from './game/playerVault';
 import { resolveSpinOutcome } from './game/slotEngine';
 import {
   BET_STEPS,
@@ -55,6 +65,16 @@ export default function App() {
   const [showPaytable, setShowPaytable] = useState<boolean>(false);
   const [contextLost, setContextLost] = useState<boolean>(false);
 
+  // Firebase Auth & Cloud Player Vault
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [playerProfile, setPlayerProfile] = useState<PlayerVaultProfile | null>(null);
+  const [authModal, setAuthModal] = useState<{
+    open: boolean;
+    mode: 'login' | 'signup';
+  }>({ open: false, mode: 'login' });
+  const [fatalError, setFatalError] = useState<Error | null>(null);
+
   // Grid Window Cascade Multiplier Progression (2x, 3x, 4x, 6x, 10x)
   const [activeCascadeIndex, setActiveCascadeIndex] = useState<number>(-1);
 
@@ -88,6 +108,7 @@ export default function App() {
     freeSpinsLeft,
     showPaytable,
     freeSpinSummary,
+    authModalOpen: authModal.open,
   });
   stateRef.current = {
     phase,
@@ -99,8 +120,17 @@ export default function App() {
     freeSpinsLeft,
     showPaytable,
     freeSpinSummary,
+    authModalOpen: authModal.open,
   };
 
+  const userRef = useRef<User | null>(null);
+  const hadSignedInRef = useRef<boolean>(false);
+  const balanceRef = useRef<number>(2500);
+  const statsRef = useRef<{
+    totalSpins: number;
+    totalWon: number;
+    biggestWin: number;
+  }>({ totalSpins: 0, totalWon: 0, biggestWin: 0 });
   const freeSpinsLeftRef = useRef<number>(0);
   const freeSpinPotRef = useRef<number>(0);
   const freeSpinsPlayedRef = useRef<number>(0);
@@ -108,6 +138,10 @@ export default function App() {
   const mountedRef = useRef<boolean>(true);
   const inspectTimeoutRef = useRef<number | null>(null);
   const winAnimRef = useRef<number | null>(null);
+
+  if (fatalError) {
+    throw fatalError;
+  }
 
   const currentBet = BET_STEPS[betIndex];
 
@@ -166,6 +200,109 @@ export default function App() {
     soundEngine.setFreeSpinMood(freeSpinsLeft > 0 || freeSpinSummary !== null);
   }, [freeSpinsLeft, freeSpinSummary]);
 
+  const persistVaultState = useCallback(
+    (override?: Partial<PlayerVaultProfile>) => {
+      const currentUser = userRef.current;
+      if (!currentUser) return;
+
+      const patch = {
+        balance: override?.balance ?? balanceRef.current,
+        freeSpinsLeft: override?.freeSpinsLeft ?? freeSpinsLeftRef.current,
+        freeSpinPot: override?.freeSpinPot ?? freeSpinPotRef.current,
+        freeSpinsPlayed: override?.freeSpinsPlayed ?? freeSpinsPlayedRef.current,
+        totalSpins: override?.totalSpins ?? statsRef.current.totalSpins,
+        totalWon: override?.totalWon ?? statsRef.current.totalWon,
+        biggestWin: override?.biggestWin ?? statsRef.current.biggestWin,
+      };
+
+      setPlayerProfile((prev) => (prev ? { ...prev, ...patch } : prev));
+      void syncPlayerVault(currentUser.uid, patch).catch((err) => {
+        if (mountedRef.current) {
+          setFatalError(
+            err instanceof Error ? err : new Error(String(err)),
+          );
+        }
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
+      if (!active) return;
+      userRef.current = nextUser;
+      setUser(nextUser);
+
+      if (!nextUser) {
+        setPlayerProfile(null);
+        setAuthLoading(false);
+        if (hadSignedInRef.current) {
+          hadSignedInRef.current = false;
+          balanceRef.current = 2500;
+          setBalance(2500);
+          freeSpinsLeftRef.current = 0;
+          freeSpinPotRef.current = 0;
+          freeSpinsPlayedRef.current = 0;
+          statsRef.current = { totalSpins: 0, totalWon: 0, biggestWin: 0 };
+          setFreeSpinsLeft(0);
+          setFreeSpinPot(0);
+          setFreeSpinSummary(null);
+          setLastWin(0);
+          setDisplayWin(0);
+        }
+        return;
+      }
+
+      hadSignedInRef.current = true;
+      try {
+        const { profile, isNewAccount } = await ensurePlayerVault(nextUser, {
+          balance: balanceRef.current,
+          freeSpinsLeft: freeSpinsLeftRef.current,
+          freeSpinPot: freeSpinPotRef.current,
+          freeSpinsPlayed: freeSpinsPlayedRef.current,
+        });
+        if (!active) return;
+        setPlayerProfile(profile);
+        statsRef.current = {
+          totalSpins: profile.totalSpins,
+          totalWon: profile.totalWon,
+          biggestWin: profile.biggestWin,
+        };
+
+        if (!isNewAccount) {
+          balanceRef.current = profile.balance;
+          setBalance(profile.balance);
+          freeSpinsLeftRef.current = profile.freeSpinsLeft;
+          freeSpinPotRef.current = profile.freeSpinPot;
+          freeSpinsPlayedRef.current = profile.freeSpinsPlayed;
+          setFreeSpinsLeft(profile.freeSpinsLeft);
+          setFreeSpinPot(profile.freeSpinPot);
+          if (profile.freeSpinsLeft === 0 && profile.freeSpinPot > 0) {
+            bonusCollectedRef.current = false;
+            setFreeSpinSummary({
+              totalWin: profile.freeSpinPot,
+              spinsPlayed: Math.max(1, profile.freeSpinsPlayed),
+            });
+          }
+        }
+      } catch (err) {
+        if (active) {
+          setFatalError(
+            err instanceof Error ? err : new Error(String(err)),
+          );
+        }
+      } finally {
+        if (active) setAuthLoading(false);
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
   const animateWinCounter = useCallback((target: number) => {
     if (winAnimRef.current) {
       cancelAnimationFrame(winAnimRef.current);
@@ -210,7 +347,8 @@ export default function App() {
       s.isSpinning ||
       s.phase !== 'playing' ||
       s.showPaytable ||
-      s.freeSpinSummary !== null
+      s.freeSpinSummary !== null ||
+      s.authModalOpen
     ) {
       return;
     }
@@ -220,7 +358,7 @@ export default function App() {
     const bet = BET_STEPS[s.betIndex];
     const inFreeSpin = freeSpinsLeftRef.current > 0;
 
-    if (!inFreeSpin && s.balance < bet) {
+    if (!inFreeSpin && balanceRef.current < bet) {
       setAutoPlay(false);
       return;
     }
@@ -243,8 +381,12 @@ export default function App() {
       setFreeSpinsLeft(freeSpinsLeftRef.current);
       freeSpinsPlayedRef.current += 1;
     } else {
-      setBalance((prev) => Math.round((prev - bet) * 100) / 100);
+      const debited = Math.round((balanceRef.current - bet) * 100) / 100;
+      balanceRef.current = debited;
+      setBalance(debited);
     }
+
+    statsRef.current.totalSpins += 1;
 
     const outcome = resolveSpinOutcome(bet, inFreeSpin);
 
@@ -272,6 +414,13 @@ export default function App() {
       setLastWin(outcome.totalWin);
       animateWinCounter(outcome.totalWin);
 
+      statsRef.current.totalWon =
+        Math.round((statsRef.current.totalWon + outcome.totalWin) * 100) / 100;
+      statsRef.current.biggestWin = Math.max(
+        statsRef.current.biggestWin,
+        outcome.totalWin,
+      );
+
       if (inFreeSpin) {
         // Defer crediting balance during Free Spins; sum into the Bonus Pot instead
         const updatedPot =
@@ -285,7 +434,10 @@ export default function App() {
           isBig,
         });
       } else {
-        setBalance((prev) => Math.round((prev + outcome.totalWin) * 100) / 100);
+        const credited =
+          Math.round((balanceRef.current + outcome.totalWin) * 100) / 100;
+        balanceRef.current = credited;
+        setBalance(credited);
         setWinBanner({
           visible: true,
           label: isBig ? 'Sovereign Win' : 'Total Win',
@@ -297,6 +449,8 @@ export default function App() {
       setLastWin(0);
       setDisplayWin(0);
     }
+
+    persistVaultState();
 
     // If this was the final Free Spin (and no retrigger remained), show the roll-up summary
     if (inFreeSpin && freeSpinsLeftRef.current === 0) {
@@ -311,7 +465,7 @@ export default function App() {
     }
 
     setIsSpinning(false);
-  }, [animateWinCounter]);
+  }, [animateWinCounter, persistVaultState]);
 
   const handleCollectFreeSpinSummary = useCallback(() => {
     if (bonusCollectedRef.current) return;
@@ -324,9 +478,15 @@ export default function App() {
 
     const total = freeSpinPotRef.current;
     if (total > 0) {
-      setBalance((prev) => Math.round((prev + total) * 100) / 100);
+      const credited = Math.round((balanceRef.current + total) * 100) / 100;
+      balanceRef.current = credited;
+      setBalance(credited);
       setLastWin(total);
       setDisplayWin(total);
+      statsRef.current.biggestWin = Math.max(
+        statsRef.current.biggestWin,
+        total,
+      );
     }
 
     freeSpinPotRef.current = 0;
@@ -340,14 +500,17 @@ export default function App() {
       amount: 0,
       isBig: false,
     });
-  }, []);
+
+    persistVaultState();
+  }, [persistVaultState]);
 
   useEffect(() => {
     if (
       isSpinning ||
       phase !== 'playing' ||
       showPaytable ||
-      freeSpinSummary !== null
+      freeSpinSummary !== null ||
+      authModal.open
     ) {
       return;
     }
@@ -368,6 +531,7 @@ export default function App() {
     phase,
     showPaytable,
     freeSpinSummary,
+    authModal.open,
     freeSpinsLeft,
     autoPlay,
     balance,
@@ -379,7 +543,7 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const s = stateRef.current;
-      if (s.freeSpinSummary !== null) return;
+      if (s.freeSpinSummary !== null || s.authModalOpen) return;
       if (e.code === 'Space' || e.code === 'Enter') {
         if (s.phase === 'title') {
           e.preventDefault();
@@ -429,16 +593,21 @@ export default function App() {
   const handleRefill = () => {
     soundEngine.unlock();
     soundEngine.playMultiplierHit(5);
-    setBalance((prev) => Math.round((prev + 1000) * 100) / 100);
+    const refilled = Math.round((balanceRef.current + 1000) * 100) / 100;
+    balanceRef.current = refilled;
+    setBalance(refilled);
+    persistVaultState({ balance: refilled });
   };
 
   const canSpin =
     !isSpinning &&
     freeSpinSummary === null &&
+    !authModal.open &&
     (freeSpinsLeft > 0 || balance >= currentBet);
   const needsRefill =
     !isSpinning &&
     freeSpinSummary === null &&
+    !authModal.open &&
     freeSpinsLeft === 0 &&
     balance < currentBet;
 
@@ -474,7 +643,18 @@ export default function App() {
       )}
 
       {/* Title Screen */}
-      {phase === 'title' && <TitleOverlay onStart={handleStartGame} />}
+      {phase === 'title' && (
+        <TitleOverlay
+          onStart={handleStartGame}
+          user={user}
+          profile={playerProfile}
+          authLoading={authLoading}
+          onOpenAuth={(mode) => {
+            soundEngine.playClick();
+            setAuthModal({ open: true, mode });
+          }}
+        />
+      )}
 
       {/* Active Game HUD */}
       {phase === 'playing' && (
@@ -613,6 +793,35 @@ export default function App() {
                     <VolumeX className="w-4 h-4 text-rose-400" />
                   ) : (
                     <Volume2 className="w-4 h-4 text-emerald-300" />
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playClick();
+                    setAuthModal({ open: true, mode: 'login' });
+                  }}
+                  aria-label={user ? 'Open player account' : 'Log in or sign up'}
+                  title={user ? 'Player Vault' : 'Log In / Sign Up'}
+                  className={`min-w-[44px] min-h-[44px] px-2.5 flex items-center justify-center gap-1.5 rounded-xl border text-xs font-medium transition-colors cursor-pointer ${
+                    user
+                      ? 'bg-emerald-500/15 border-emerald-400/45 text-emerald-200'
+                      : 'bg-[#0b101b]/92 border-amber-400/35 text-amber-200 hover:bg-amber-500/15'
+                  }`}
+                >
+                  {user ? (
+                    <>
+                      <UserCheck className="w-4 h-4 shrink-0" />
+                      <span className="hidden md:inline max-w-[96px] truncate">
+                        {playerProfile?.displayName || user.displayName || 'Vault'}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <LogIn className="w-4 h-4 shrink-0" />
+                      <span className="hidden md:inline">Log In</span>
+                    </>
                   )}
                 </button>
               </div>
@@ -852,6 +1061,19 @@ export default function App() {
           totalWin={freeSpinSummary.totalWin}
           spinsPlayed={freeSpinSummary.spinsPlayed}
           onCollect={handleCollectFreeSpinSummary}
+        />
+      )}
+
+      {/* Account Login / Sign Up / Vault Modal */}
+      {authModal.open && (
+        <AuthModal
+          user={user}
+          profile={playerProfile}
+          initialMode={authModal.mode}
+          onClose={() => {
+            soundEngine.playClick();
+            setAuthModal((prev) => ({ ...prev, open: false }));
+          }}
         />
       )}
     </div>
