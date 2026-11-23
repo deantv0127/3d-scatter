@@ -465,8 +465,8 @@ class SoundEngine {
       } else {
         utter.lang = 'en-GB';
       }
-      utter.rate = 1.02;
-      utter.pitch = 1.09;
+      utter.rate = 1.04;
+      utter.pitch = 1.3;
       utter.volume = 0.9;
 
       this.duckMusic(true);
@@ -497,9 +497,9 @@ class SoundEngine {
   public announceMultiplier(tierMultiplier: number): void {
     const labelMap: Record<number, string> = {
       2: 'Two times!',
-      3: 'Lovely! Three times!',
+      3: 'Keep going! Three times!',
       4: 'Four times!',
-      6: 'Splendid! Six times!',
+      6: 'Wow! Six times!',
       10: 'Magnificent! Ten times!',
     };
     this.speak(labelMap[tierMultiplier] ?? `${tierMultiplier} times!`, true);

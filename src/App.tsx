@@ -513,6 +513,9 @@ export default function App() {
 
     if (outcome.totalWin > 0) {
       const isBig = outcome.totalWin >= bet * 10;
+      if (isBig) {
+        stage.triggerBigWinExplosion(outcome.totalWin >= bet * 25 ? 1.35 : 1.0);
+      }
       setLastWin(outcome.totalWin);
       animateWinCounter(outcome.totalWin);
 
@@ -580,6 +583,10 @@ export default function App() {
 
     const total = freeSpinPotRef.current;
     if (total > 0) {
+      const activeBet = BET_STEPS[stateRef.current.betIndex];
+      if (total >= activeBet * 10) {
+        stageRef.current?.triggerBigWinExplosion(total >= activeBet * 25 ? 1.35 : 1.15);
+      }
       const credited = Math.round((balanceRef.current + total) * 100) / 100;
       balanceRef.current = credited;
       setBalance(credited);

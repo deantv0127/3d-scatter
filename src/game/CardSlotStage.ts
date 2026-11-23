@@ -135,6 +135,9 @@ interface ParticleState {
   life: number;
   maxLife: number;
   size: number;
+  gravity: number;
+  drag: number;
+  spinSpeed: number;
 }
 
 export interface StageCallbacks {
@@ -172,9 +175,10 @@ export class CardSlotStage {
   private sharedGeometries: THREE.BufferGeometry[] = [];
   private sharedMaterials: THREE.Material[] = [];
 
-  private readonly particleCount = 110;
+  private readonly particleCount = 340;
   private particleMesh!: THREE.InstancedMesh;
   private particles: ParticleState[] = [];
+  private explosionTimers: number[] = [];
 
   private baseCamPos = new THREE.Vector3(0, 0.25, 9.4);
   private baseLookTarget = new THREE.Vector3(0, 0.14, 0);
@@ -443,6 +447,9 @@ export class CardSlotStage {
         life: 0,
         maxLife: 1,
         size: 0,
+        gravity: 6.2,
+        drag: 0,
+        spinSpeed: 5.2,
       });
       _scaleVec.set(0, 0, 0);
       _mat4.compose(_vec3.set(0, -50, 0), _quat.identity(), _scaleVec);
@@ -481,12 +488,105 @@ export class CardSlotStage {
       p.life = 0;
       p.maxLife = 0.48 + Math.random() * 0.36;
       p.size = 0.72 + Math.random() * 0.8;
+      p.gravity = 6.2;
+      p.drag = 0;
+      p.spinSpeed = 5.2;
       this.particleMesh.setColorAt(i, _color.setHex(hexColor));
       spawned += 1;
     }
     if (spawned > 0 && this.particleMesh.instanceColor) {
       this.particleMesh.instanceColor.needsUpdate = true;
     }
+  }
+
+  private emitExplosionBurst(
+    originX: number,
+    originY: number,
+    originZ: number,
+    count: number,
+    minSpeed: number,
+    maxSpeed: number,
+    upwardBias: number,
+    palette: number[],
+  ): void {
+    let spawned = 0;
+    for (let i = 0; i < this.particleCount && spawned < count; i += 1) {
+      const p = this.particles[i];
+      if (p.active) continue;
+      p.active = true;
+      p.x = originX + (Math.random() - 0.5) * 0.55;
+      p.y = originY + (Math.random() - 0.5) * 0.45;
+      p.z = originZ + (Math.random() - 0.5) * 0.25;
+
+      const angle = Math.random() * Math.PI * 2;
+      const speed = minSpeed + Math.random() * (maxSpeed - minSpeed);
+      p.vx = Math.cos(angle) * speed;
+      p.vy = Math.sin(angle) * speed * 0.82 + upwardBias + Math.random() * 1.4;
+      p.vz = 1.2 + Math.random() * 3.1;
+      p.rx = Math.random() * Math.PI;
+      p.ry = Math.random() * Math.PI;
+      p.life = 0;
+      p.maxLife = 0.92 + Math.random() * 0.68;
+      p.size = 0.95 + Math.random() * 1.05;
+      p.gravity = 3.5 + Math.random() * 1.1;
+      p.drag = 1.45;
+      p.spinSpeed = 7.5 + Math.random() * 5.0;
+
+      const hexColor = palette[spawned % palette.length];
+      this.particleMesh.setColorAt(i, _color.setHex(hexColor));
+      spawned += 1;
+    }
+    if (spawned > 0 && this.particleMesh.instanceColor) {
+      this.particleMesh.instanceColor.needsUpdate = true;
+    }
+  }
+
+  public triggerBigWinExplosion(intensity = 1): void {
+    if (this.disposed) return;
+
+    const palette = [
+      0xfacc15,
+      0xfef08a,
+      0xf59e0b,
+      0x34d399,
+      0xfb7185,
+      0x38bdf8,
+      0xffffff,
+    ];
+
+    this.shakeTrauma = Math.min(
+      1,
+      this.shakeTrauma + 0.58 * Math.min(intensity, 1.35),
+    );
+    this.winPointLight.intensity = Math.max(
+      this.winPointLight.intensity,
+      6.4,
+    );
+
+    const scaleCount = (base: number) =>
+      Math.round(base * THREE.MathUtils.clamp(intensity, 0.85, 1.35));
+
+    // Wave 1: Immediate radial starburst from grid center
+    this.emitExplosionBurst(0, 0.1, 0.6, scaleCount(105), 3.6, 8.2, 2.2, palette);
+
+    // Wave 2: Twin side celebratory fountains
+    const t1 = window.setTimeout(() => {
+      if (this.disposed) return;
+      this.winPointLight.intensity = Math.max(
+        this.winPointLight.intensity,
+        4.6,
+      );
+      this.emitExplosionBurst(-2.9, -1.1, 0.72, scaleCount(50), 2.8, 6.4, 3.8, palette);
+      this.emitExplosionBurst(2.9, -1.1, 0.72, scaleCount(50), 2.8, 6.4, 3.8, palette);
+    }, 150);
+
+    // Wave 3: High crown jewel cascade
+    const t2 = window.setTimeout(() => {
+      if (this.disposed) return;
+      this.emitExplosionBurst(0, 1.85, 0.82, scaleCount(65), 2.6, 6.6, 1.2, palette);
+    }, 320);
+
+    this.explosionTimers.push(t1, t2);
   }
 
   private createCardChassisAssets(): {
@@ -569,14 +669,25 @@ export class CardSlotStage {
     chassisMesh.receiveShadow = this.renderer.shadowMap.enabled;
     group.add(chassisMesh);
 
-    const frontMat = new THREE.MeshStandardMaterial({
-      map: this.atlas.getFaceTexture(cell.symbol),
-      roughness: 0.34,
-      metalness: 0.16,
-      polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -1,
-    });
+    const frontMat = this.isSoftwareGl
+      ? new THREE.MeshStandardMaterial({
+          map: this.atlas.getFaceTexture(cell.symbol),
+          roughness: 0.28,
+          metalness: 0.22,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1,
+        })
+      : new THREE.MeshPhysicalMaterial({
+          map: this.atlas.getFaceTexture(cell.symbol),
+          roughness: 0.25,
+          metalness: 0.2,
+          clearcoat: 0.48,
+          clearcoatRoughness: 0.2,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1,
+        });
     const frontMesh = new THREE.Mesh(assets.faceGeo, frontMat);
     frontMesh.position.z = 0.024;
     group.add(frontMesh);
@@ -1256,12 +1367,17 @@ export class CardSlotStage {
         continue;
       }
 
-      p.vy -= 6.2 * dt;
+      if (p.drag > 0) {
+        const damp = Math.exp(-p.drag * dt);
+        p.vx *= damp;
+        p.vz *= damp;
+      }
+      p.vy -= p.gravity * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       p.z += p.vz * dt;
-      p.rx += 5.5 * dt;
-      p.ry += 4.2 * dt;
+      p.rx += p.spinSpeed * dt;
+      p.ry += p.spinSpeed * 0.76 * dt;
 
       const tNorm = p.life / p.maxLife;
       const s = p.size * (1 - tNorm * tNorm);
@@ -1281,6 +1397,10 @@ export class CardSlotStage {
     this.disposed = true;
     cancelAnimationFrame(this.frameId);
     window.clearTimeout(this.frameId);
+    for (const timerId of this.explosionTimers) {
+      window.clearTimeout(timerId);
+    }
+    this.explosionTimers = [];
     this.abortController?.abort();
 
     for (const rig of this.cardRigs) {
