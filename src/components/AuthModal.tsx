@@ -1,7 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { signInWithPopup, signOut, User } from 'firebase/auth';
-import { LogIn, LogOut, ShieldCheck, UserPlus, X } from 'lucide-react';
-import { auth, googleProvider } from '../firebase';
+import {
+  Check,
+  Copy,
+  ExternalLink,
+  LogIn,
+  LogOut,
+  RefreshCw,
+  ShieldCheck,
+  UserPlus,
+  X,
+} from 'lucide-react';
+import { auth, firebaseProjectId, googleProvider } from '../firebase';
 import { PlayerVaultProfile } from '../game/playerVault';
 import { soundEngine } from '../game/audio';
 
@@ -21,6 +31,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [mode, setMode] = useState<'login' | 'signup'>(initialMode);
   const [busy, setBusy] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [unauthorizedHost, setUnauthorizedHost] = useState<string | null>(null);
+  const [copiedHost, setCopiedHost] = useState<boolean>(false);
 
   useEffect(() => {
     setMode(initialMode);
@@ -42,6 +54,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     soundEngine.playClick();
     setBusy(true);
     setErrorMsg(null);
+    setUnauthorizedHost(null);
     try {
       await signInWithPopup(auth, googleProvider);
       onClose();
@@ -50,10 +63,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         typeof err === 'object' && err !== null && 'code' in err
           ? String((err as { code?: unknown }).code)
           : '';
-      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+      if (
+        code === 'auth/popup-closed-by-user' ||
+        code === 'auth/cancelled-popup-request'
+      ) {
         setErrorMsg('Sign-in popup was closed before completing.');
       } else if (code === 'auth/popup-blocked') {
-        setErrorMsg('Popup was blocked by your browser. Please allow popups and try again.');
+        setErrorMsg(
+          'Popup was blocked by your browser. Please allow popups and try again.',
+        );
+      } else if (code === 'auth/unauthorized-domain') {
+        const host =
+          typeof window !== 'undefined' ? window.location.hostname : '';
+        setUnauthorizedHost(host || 'current domain');
+        setErrorMsg(
+          'This domain is not yet authorized for Google Sign-In on your Firebase project.',
+        );
       } else {
         setErrorMsg(
           err instanceof Error
@@ -66,11 +91,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
+  const handleCopyHost = async () => {
+    if (!unauthorizedHost) return;
+    try {
+      await navigator.clipboard.writeText(unauthorizedHost);
+      setCopiedHost(true);
+      window.setTimeout(() => setCopiedHost(false), 1800);
+    } catch {
+      // Clipboard may be unavailable in restricted contexts
+    }
+  };
+
   const handleSignOut = async () => {
     if (busy) return;
     soundEngine.playClick();
     setBusy(true);
     setErrorMsg(null);
+    setUnauthorizedHost(null);
     try {
       await signOut(auth);
       onClose();
@@ -82,6 +119,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setBusy(false);
     }
   };
+
+  const authSettingsUrl = `https://console.firebase.google.com/project/${firebaseProjectId}/authentication/settings`;
 
   return (
     <div
@@ -205,6 +244,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     soundEngine.playClick();
                     setMode('login');
                     setErrorMsg(null);
+                    setUnauthorizedHost(null);
                   }}
                   className={`min-h-[44px] rounded-lg text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
                     mode === 'login'
@@ -221,6 +261,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     soundEngine.playClick();
                     setMode('signup');
                     setErrorMsg(null);
+                    setUnauthorizedHost(null);
                   }}
                   className={`min-h-[44px] rounded-lg text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
                     mode === 'signup'
@@ -250,8 +291,59 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
 
               {errorMsg && (
-                <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-400/40 text-xs text-rose-200">
-                  {errorMsg}
+                <div className="p-3.5 rounded-xl bg-rose-500/15 border border-rose-400/40 text-xs text-rose-100 space-y-2.5">
+                  <p className="leading-relaxed">{errorMsg}</p>
+
+                  {unauthorizedHost && (
+                    <div className="space-y-2 pt-1 border-t border-rose-400/25">
+                      <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-[#070a10]/90 border border-white/10">
+                        <span className="font-mono-num text-[11px] text-amber-200 truncate">
+                          {unauthorizedHost}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyHost()}
+                          className="min-h-[32px] px-2 rounded-md bg-white/10 hover:bg-white/20 text-[11px] text-stone-100 flex items-center gap-1 shrink-0 cursor-pointer"
+                        >
+                          {copiedHost ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-emerald-300" />
+                              <span>Copied</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Copy</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-rose-200/90 leading-relaxed">
+                        Add this domain under Firebase Console → Authentication →
+                        Settings → Authorized domains, or reload if it was just
+                        registered.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <a
+                          href={authSettingsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="min-h-[36px] px-3 rounded-lg bg-white/10 hover:bg-white/18 text-[11px] font-semibold text-amber-200 inline-flex items-center gap-1.5"
+                        >
+                          <span>Auth Settings</span>
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => window.location.reload()}
+                          className="min-h-[36px] px-3 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-[11px] font-semibold text-amber-200 inline-flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>Reload & Retry</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -261,7 +353,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 disabled={busy}
                 className="w-full min-h-[48px] px-5 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] disabled:opacity-50 text-stone-950 font-bold text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-lg shadow-amber-500/20 transition-all cursor-pointer"
               >
-                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                <svg
+                  className="w-5 h-5 shrink-0"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
                   <path
                     fill="#1c1917"
                     d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 5.44-6.5 5.44C8.36 19.27 5 16.25 5 12c0-4.1 3.2-7.27 7.2-7.27c3.09 0 4.9 1.97 4.9 1.97L19 4.72S16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12c0 5.05 4.13 10 10.22 10c5.35 0 9.25-3.67 9.25-9.09c0-1.15-.15-1.81-.15-1.81Z"
