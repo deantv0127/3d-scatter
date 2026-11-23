@@ -1,0 +1,6 @@
+{
+  "name": "Sovereign Arcana — 3D Scatter Slot",
+  "description": "A tactile 3D card scatter slot game featuring pay-anywhere cascades, holographic multiplier cards, free spins, and procedural Web Audio sound effects.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
