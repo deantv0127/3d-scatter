@@ -5,6 +5,7 @@ import { CardTextureAtlas } from './cardTextures';
 import { createShowcaseGrid } from './slotEngine';
 import {
   CardCellData,
+  CascadeTierMultiplier,
   GRID_COLS,
   GRID_ROWS,
   MultiplierValue,
@@ -25,7 +26,7 @@ const _pointerNdc = new THREE.Vector2();
 const CARD_W = 0.98;
 const CARD_H = 1.38;
 const CARD_GAP_X = 0.19;
-const CARD_GAP_Y = 0.18;
+const CARD_GAP_Y = 0.17;
 const COL_STEP = CARD_W + CARD_GAP_X;
 const ROW_STEP = CARD_H + CARD_GAP_Y;
 
@@ -34,8 +35,7 @@ function cellToWorldX(col: number): number {
 }
 
 function cellToWorldY(row: number): number {
-  // row 0 is top, row 2 is bottom
-  return ((GRID_ROWS - 1) / 2 - row) * ROW_STEP + 0.28;
+  return ((GRID_ROWS - 1) / 2 - row) * ROW_STEP - 0.02;
 }
 
 function createRoundedRectShape(w: number, h: number, r: number): THREE.Shape {
@@ -60,7 +60,7 @@ function createNormalizedRoundedPlane(
   r: number,
 ): THREE.ShapeGeometry {
   const shape = createRoundedRectShape(w, h, r);
-  const geo = new THREE.ShapeGeometry(shape, 10);
+  const geo = new THREE.ShapeGeometry(shape, 6);
   const pos = geo.attributes.position;
   const uvs = new Float32Array(pos.count * 2);
   for (let i = 0; i < pos.count; i += 1) {
@@ -79,16 +79,20 @@ function createHaloFrameGeometry(
   r: number,
   border: number,
 ): THREE.ExtrudeGeometry {
-  const outer = createRoundedRectShape(w + border * 2, h + border * 2, r + border * 0.6);
+  const outer = createRoundedRectShape(
+    w + border * 2,
+    h + border * 2,
+    r + border * 0.6,
+  );
   const inner = createRoundedRectShape(w - 0.01, h - 0.01, r);
   outer.holes.push(inner);
   const geo = new THREE.ExtrudeGeometry(outer, {
-    depth: 0.032,
+    depth: 0.028,
     bevelEnabled: true,
-    bevelThickness: 0.008,
-    bevelSize: 0.008,
-    bevelSegments: 2,
-    curveSegments: 8,
+    bevelThickness: 0.006,
+    bevelSize: 0.006,
+    bevelSegments: 1,
+    curveSegments: 5,
   });
   geo.center();
   return geo;
@@ -111,7 +115,7 @@ interface CardRig {
   velY: number;
   springBounce: boolean;
   delayTimer: number;
-  snapped: boolean;
+  hideWhileDelayed: boolean;
   highlightIntensity: number;
   targetHighlight: number;
   highlightColor: THREE.Color;
@@ -135,8 +139,13 @@ interface ParticleState {
 
 export interface StageCallbacks {
   onCardInspect?: (cell: CardCellData) => void;
-  onCascadeStep?: (stepIndex: number, stepWin: number, runningBaseWin: number) => void;
-  onMultiplierPulse?: (value: MultiplierValue, totalApplied: number) => void;
+  onCascadeStep?: (
+    stepIndex: number,
+    tierMultiplier: CascadeTierMultiplier,
+    stepWin: number,
+    runningWin: number,
+  ) => void;
+  onMultiplierPulse?: (value: MultiplierValue, totalExtraFactor: number) => void;
   onContextLostChange?: (lost: boolean) => void;
 }
 
@@ -147,6 +156,7 @@ export class CardSlotStage {
   private camera!: THREE.PerspectiveCamera;
   private atlas!: CardTextureAtlas;
   private isSoftwareGl: boolean;
+  private isMobile: boolean;
   private callbacks: StageCallbacks;
 
   private frameId = 0;
@@ -160,26 +170,22 @@ export class CardSlotStage {
   private winPointLight!: THREE.PointLight;
   private keyLight!: THREE.DirectionalLight;
 
-  // Shared card geometries/materials for disposal
   private sharedGeometries: THREE.BufferGeometry[] = [];
   private sharedMaterials: THREE.Material[] = [];
 
-  // Particle InstancedMesh pool
-  private readonly particleCount = 130;
+  private readonly particleCount = 110;
   private particleMesh!: THREE.InstancedMesh;
   private particles: ParticleState[] = [];
 
-  // Camera framing & trauma shake
-  private baseCamPos = new THREE.Vector3(0, 0.35, 9.2);
-  private baseLookTarget = new THREE.Vector3(0, 0.24, 0);
-  private currentLookTarget = new THREE.Vector3(0, 0.24, 0);
+  private baseCamPos = new THREE.Vector3(0, 0.25, 9.4);
+  private baseLookTarget = new THREE.Vector3(0, 0.14, 0);
+  private currentLookTarget = new THREE.Vector3(0, 0.14, 0);
   private pointerTiltX = 0;
   private pointerTiltY = 0;
   private targetPointerTiltX = 0;
   private targetPointerTiltY = 0;
   private shakeTrauma = 0;
 
-  // State flags
   private mode: 'title' | 'idle' | 'spinning' = 'title';
   private inspectedCardId: string | null = null;
   private inspectTimer = 0;
@@ -191,6 +197,10 @@ export class CardSlotStage {
     this.container = container;
     this.callbacks = callbacks;
     this.isSoftwareGl = this.detectSoftwareWebGL();
+    this.isMobile =
+      typeof window !== 'undefined' &&
+      (window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 768);
+
     this.initScene();
     this.buildTableStage();
     this.buildParticles();
@@ -198,6 +208,8 @@ export class CardSlotStage {
     this.updateCameraFraming();
     this.bindEvents();
 
+    // Pre-warm all card textures & shaders at startup so spins never hitch on mobile
+    this.atlas.preloadAll(this.renderer);
     if (!this.isSoftwareGl) {
       this.renderer.compile(this.scene, this.camera);
     }
@@ -230,13 +242,14 @@ export class CardSlotStage {
       powerPreference: 'high-performance',
     });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(
-      this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2),
-    );
+    const targetDpr = this.isSoftwareGl
+      ? 1
+      : Math.min(window.devicePixelRatio || 1, this.isMobile ? 1.5 : 2);
+    this.renderer.setPixelRatio(targetDpr);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.12;
-    this.renderer.shadowMap.enabled = !this.isSoftwareGl;
+    this.renderer.shadowMap.enabled = !this.isSoftwareGl && !this.isMobile;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     const canvas = this.renderer.domElement;
@@ -249,12 +262,11 @@ export class CardSlotStage {
     this.scene = new THREE.Scene();
     const bgColor = new THREE.Color(0x070a10);
     this.scene.background = bgColor;
-    this.scene.fog = new THREE.FogExp2(0x070a10, 0.045);
+    this.scene.fog = new THREE.FogExp2(0x070a10, 0.042);
 
     this.camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 60);
     this.camera.position.copy(this.baseCamPos);
 
-    // Procedural Studio IBL via RoomEnvironment
     const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmremGenerator.fromScene(
       new RoomEnvironment(),
@@ -262,13 +274,12 @@ export class CardSlotStage {
     ).texture;
     pmremGenerator.dispose();
 
-    // 3-point warm/cool studio rig (<= 3 lights with max 1 shadow caster)
-    const hemiLight = new THREE.HemisphereLight(0x9cb8ff, 0x1a1410, 0.65);
+    const hemiLight = new THREE.HemisphereLight(0x9cb8ff, 0x1a1410, 0.7);
     this.scene.add(hemiLight);
 
-    this.keyLight = new THREE.DirectionalLight(0xfff1d6, 2.1);
+    this.keyLight = new THREE.DirectionalLight(0xfff1d6, 2.15);
     this.keyLight.position.set(4.5, 7.2, 6.8);
-    if (!this.isSoftwareGl) {
+    if (this.renderer.shadowMap.enabled) {
       this.keyLight.castShadow = true;
       this.keyLight.shadow.mapSize.set(1024, 1024);
       this.keyLight.shadow.camera.near = 1;
@@ -288,16 +299,18 @@ export class CardSlotStage {
     this.scene.add(rimLight);
 
     this.winPointLight = new THREE.PointLight(0xffcb57, 0.0, 14, 1.5);
-    this.winPointLight.position.set(0, 0.6, 3.5);
+    this.winPointLight.position.set(0, 0.5, 3.5);
     this.scene.add(this.winPointLight);
 
-    this.atlas = new CardTextureAtlas(this.renderer.capabilities.getMaxAnisotropy());
+    this.atlas = new CardTextureAtlas(
+      this.renderer.capabilities.getMaxAnisotropy(),
+      this.isMobile,
+    );
     this.scene.add(this.stageGroup);
     this.scene.add(this.cardContainer);
   }
 
   private buildTableStage(): void {
-    // Grounded 5-part velvet-baize & brushed-brass dealer stage
     const plinthPoints = [
       new THREE.Vector2(0, -0.34),
       new THREE.Vector2(4.95, -0.34),
@@ -306,21 +319,20 @@ export class CardSlotStage {
       new THREE.Vector2(4.62, 0.0),
       new THREE.Vector2(0, 0.0),
     ];
-    const plinthGeo = new THREE.LatheGeometry(plinthPoints, 56);
+    const plinthGeo = new THREE.LatheGeometry(plinthPoints, 40);
     const plinthMat = new THREE.MeshStandardMaterial({
       color: 0x0d1119,
       roughness: 0.42,
       metalness: 0.65,
     });
     const plinth = new THREE.Mesh(plinthGeo, plinthMat);
-    plinth.position.set(0, -2.55, -0.35);
+    plinth.position.set(0, -2.72, -0.35);
     plinth.receiveShadow = true;
     this.stageGroup.add(plinth);
     this.sharedGeometries.push(plinthGeo);
     this.sharedMaterials.push(plinthMat);
 
-    // Emerald velvet baize table inlay (offset +0.02 above plinth top)
-    const feltGeo = new THREE.CircleGeometry(4.56, 56);
+    const feltGeo = new THREE.CircleGeometry(4.56, 40);
     feltGeo.rotateX(-Math.PI / 2);
     const feltMat = new THREE.MeshStandardMaterial({
       map: this.atlas.getFeltTexture(),
@@ -328,37 +340,35 @@ export class CardSlotStage {
       metalness: 0.04,
     });
     const felt = new THREE.Mesh(feltGeo, feltMat);
-    felt.position.set(0, -2.53, -0.35);
+    felt.position.set(0, -2.7, -0.35);
     felt.receiveShadow = true;
     this.stageGroup.add(felt);
     this.sharedGeometries.push(feltGeo);
     this.sharedMaterials.push(feltMat);
 
-    // Brushed gold/brass outer bezel torus
-    const bezelGeo = new THREE.TorusGeometry(4.68, 0.085, 16, 64);
+    const bezelGeo = new THREE.TorusGeometry(4.68, 0.085, 12, 48);
     bezelGeo.rotateX(Math.PI / 2);
-    const brassMat = new THREE.MeshPhysicalMaterial({
+    const brassMat = new THREE.MeshStandardMaterial({
       color: 0xd4af37,
-      metalness: 0.94,
-      roughness: 0.2,
-      clearcoat: 0.4,
+      metalness: 0.92,
+      roughness: 0.22,
     });
     const bezel = new THREE.Mesh(bezelGeo, brassMat);
-    bezel.position.set(0, -2.52, -0.35);
+    bezel.position.set(0, -2.69, -0.35);
     this.stageGroup.add(bezel);
     this.sharedGeometries.push(bezelGeo);
     this.sharedMaterials.push(brassMat);
 
-    // Recessed Arcana Grid Backplate behind the 5x3 cards
     const boardW = GRID_COLS * COL_STEP + 0.34;
     const boardH = GRID_ROWS * ROW_STEP + 0.32;
     const boardShape = createRoundedRectShape(boardW, boardH, 0.22);
     const boardGeo = new THREE.ExtrudeGeometry(boardShape, {
       depth: 0.08,
       bevelEnabled: true,
-      bevelThickness: 0.02,
-      bevelSize: 0.02,
-      bevelSegments: 2,
+      bevelThickness: 0.018,
+      bevelSize: 0.018,
+      bevelSegments: 1,
+      curveSegments: 5,
     });
     boardGeo.center();
     const boardMat = new THREE.MeshStandardMaterial({
@@ -367,20 +377,18 @@ export class CardSlotStage {
       metalness: 0.38,
     });
     const boardMesh = new THREE.Mesh(boardGeo, boardMat);
-    boardMesh.position.set(0, 0.28, -0.28);
+    boardMesh.position.set(0, -0.02, -0.28);
     boardMesh.receiveShadow = true;
     this.stageGroup.add(boardMesh);
     this.sharedGeometries.push(boardGeo);
     this.sharedMaterials.push(boardMat);
 
-    // Subtle brass trim border around the 5x3 board frame
-    const boardRimGeo = createHaloFrameGeometry(boardW, boardH, 0.22, 0.038);
+    const boardRimGeo = createHaloFrameGeometry(boardW, boardH, 0.22, 0.036);
     const boardRim = new THREE.Mesh(boardRimGeo, brassMat);
-    boardRim.position.set(0, 0.28, -0.24);
+    boardRim.position.set(0, -0.02, -0.24);
     this.stageGroup.add(boardRim);
     this.sharedGeometries.push(boardRimGeo);
 
-    // Soft radial contact shadow under the pedestal
     const shadowCanvas = document.createElement('canvas');
     shadowCanvas.width = 128;
     shadowCanvas.height = 128;
@@ -402,7 +410,7 @@ export class CardSlotStage {
       opacity: 0.65,
     });
     const contactPlane = new THREE.Mesh(contactGeo, contactMat);
-    contactPlane.position.set(0, -2.92, -0.35);
+    contactPlane.position.set(0, -3.08, -0.35);
     this.stageGroup.add(contactPlane);
     this.sharedGeometries.push(contactGeo);
     this.sharedMaterials.push(contactMat);
@@ -461,19 +469,19 @@ export class CardSlotStage {
       const p = this.particles[i];
       if (p.active) continue;
       p.active = true;
-      p.x = worldX + (Math.random() - 0.5) * 0.45;
-      p.y = worldY + (Math.random() - 0.5) * 0.55;
+      p.x = worldX + (Math.random() - 0.5) * 0.42;
+      p.y = worldY + (Math.random() - 0.5) * 0.5;
       p.z = worldZ + 0.08;
       const angle = Math.random() * Math.PI * 2;
-      const speed = 1.4 + Math.random() * 2.8;
+      const speed = 1.5 + Math.random() * 2.8;
       p.vx = Math.cos(angle) * speed;
-      p.vy = Math.sin(angle) * speed + 1.3;
-      p.vz = 0.8 + Math.random() * 2.1;
+      p.vy = Math.sin(angle) * speed + 1.25;
+      p.vz = 0.8 + Math.random() * 2.0;
       p.rx = Math.random() * Math.PI;
       p.ry = Math.random() * Math.PI;
       p.life = 0;
-      p.maxLife = 0.55 + Math.random() * 0.45;
-      p.size = 0.75 + Math.random() * 0.85;
+      p.maxLife = 0.48 + Math.random() * 0.36;
+      p.size = 0.72 + Math.random() * 0.8;
       this.particleMesh.setColorAt(i, _color.setHex(hexColor));
       spawned += 1;
     }
@@ -495,15 +503,24 @@ export class CardSlotStage {
     const chassisGeo = new THREE.ExtrudeGeometry(chassisShape, {
       depth: 0.024,
       bevelEnabled: true,
-      bevelThickness: 0.011,
-      bevelSize: 0.011,
-      bevelSegments: 2,
-      curveSegments: 8,
+      bevelThickness: 0.01,
+      bevelSize: 0.01,
+      bevelSegments: 1,
+      curveSegments: 5,
     });
     chassisGeo.center();
 
-    const faceGeo = createNormalizedRoundedPlane(CARD_W - 0.04, CARD_H - 0.04, 0.055);
-    const haloGeo = createHaloFrameGeometry(CARD_W + 0.02, CARD_H + 0.02, 0.085, 0.026);
+    const faceGeo = createNormalizedRoundedPlane(
+      CARD_W - 0.04,
+      CARD_H - 0.04,
+      0.055,
+    );
+    const haloGeo = createHaloFrameGeometry(
+      CARD_W + 0.02,
+      CARD_H + 0.02,
+      0.085,
+      0.025,
+    );
     const hitGeo = new THREE.PlaneGeometry(CARD_W + 0.08, CARD_H + 0.08);
 
     const chassisMat = new THREE.MeshStandardMaterial({
@@ -537,8 +554,9 @@ export class CardSlotStage {
     };
   }
 
-  private sharedCardAssets: ReturnType<CardSlotStage['createCardChassisAssets']> | null =
-    null;
+  private sharedCardAssets: ReturnType<
+    CardSlotStage['createCardChassisAssets']
+  > | null = null;
 
   private createCardRig(cell: CardCellData): CardRig {
     if (!this.sharedCardAssets) {
@@ -548,8 +566,8 @@ export class CardSlotStage {
     const group = new THREE.Group();
 
     const chassisMesh = new THREE.Mesh(assets.chassisGeo, assets.chassisMat);
-    chassisMesh.castShadow = !this.isSoftwareGl;
-    chassisMesh.receiveShadow = true;
+    chassisMesh.castShadow = this.renderer.shadowMap.enabled;
+    chassisMesh.receiveShadow = this.renderer.shadowMap.enabled;
     group.add(chassisMesh);
 
     const frontMat = new THREE.MeshStandardMaterial({
@@ -580,6 +598,7 @@ export class CardSlotStage {
     });
     const haloMesh = new THREE.Mesh(assets.haloGeo, haloMat);
     haloMesh.position.z = 0.005;
+    haloMesh.visible = false;
     group.add(haloMesh);
 
     const hitMesh = new THREE.Mesh(assets.hitGeo, assets.hitMat);
@@ -608,7 +627,7 @@ export class CardSlotStage {
       velY: 0,
       springBounce: false,
       delayTimer: 0,
-      snapped: true,
+      hideWhileDelayed: false,
       highlightIntensity: 0,
       targetHighlight: 0,
       highlightColor: new THREE.Color(0xfacc15),
@@ -622,8 +641,8 @@ export class CardSlotStage {
 
   private applyCellTexture(rig: CardRig, cell: CardCellData): void {
     rig.cell = { ...cell };
+    // Re-assign pre-warmed texture without setting needsUpdate (avoids shader re-check stall)
     rig.frontMat.map = this.atlas.getFaceTexture(cell.symbol, cell.multiplier);
-    rig.frontMat.needsUpdate = true;
   }
 
   private buildInitialCards(): void {
@@ -658,18 +677,18 @@ export class CardSlotStage {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
 
-    // Ensure 5x3 card grid (approx 6.0w x 4.9h) fits comfortably inside both mobile portrait & desktop
-    const gridWidth = GRID_COLS * COL_STEP + 0.6;
-    const gridHeight = GRID_ROWS * ROW_STEP + 1.4;
+    // Extra vertical padding at top for the premium multiplier indicator above grid window
+    const gridWidth = GRID_COLS * COL_STEP + 0.68;
+    const gridHeight = GRID_ROWS * ROW_STEP + 2.45;
     const vFovRad = THREE.MathUtils.degToRad(this.camera.fov);
     const distForHeight = gridHeight / (2 * Math.tan(vFovRad / 2));
     const hFovRad = 2 * Math.atan(Math.tan(vFovRad / 2) * aspect);
     const distForWidth = gridWidth / (2 * Math.tan(hFovRad / 2));
 
-    const targetZ = Math.max(distForHeight, distForWidth, 7.6);
-    const portraitLift = aspect < 0.85 ? 0.14 : 0.28;
-    this.baseCamPos.set(0, portraitLift, targetZ);
-    this.baseLookTarget.set(0, portraitLift - 0.08, 0);
+    const targetZ = Math.max(distForHeight, distForWidth, 8.0);
+    const centerShiftY = aspect < 0.85 ? 0.34 : 0.36;
+    this.baseCamPos.set(0, centerShiftY, targetZ);
+    this.baseLookTarget.set(0, centerShiftY - 0.16, 0);
   }
 
   private waitMs(ms: number): Promise<void> {
@@ -679,7 +698,12 @@ export class CardSlotStage {
   }
 
   private isSpecialSymbol(sym: SymbolId): boolean {
-    return sym === 'MULTIPLIER' || sym === 'WILD' || sym === 'BONUS' || sym === 'ACE';
+    return (
+      sym === 'MULTIPLIER' ||
+      sym === 'WILD' ||
+      sym === 'BONUS' ||
+      sym === 'ACE'
+    );
   }
 
   public async playSpinSequence(
@@ -691,32 +715,31 @@ export class CardSlotStage {
     this.inspectedCardId = null;
     this.inspectTimer = 0;
 
-    const tMul = turbo ? 0.52 : 1.0;
+    const tMul = turbo ? 0.54 : 1.0;
 
-    // Reset all highlights
     for (const rig of this.cardRigs) {
       rig.targetHighlight = 0;
       rig.targetScale = 1;
+      rig.hideWhileDelayed = false;
     }
 
-    // Phase 1: Spin launch — flip backward and launch cards out
+    // Phase 1: Snappy sweep-out launch (no freeze delay)
     soundEngine.playSpinLaunch();
     for (const rig of this.cardRigs) {
-      const colDelay = rig.cell.col * 0.045 * tMul;
-      rig.delayTimer = colDelay;
+      rig.delayTimer = rig.cell.col * 0.022 * tMul;
       rig.springBounce = false;
       rig.targetPos.set(
         cellToWorldX(rig.cell.col),
-        cellToWorldY(rig.cell.row) - 4.8,
-        -0.6,
+        cellToWorldY(rig.cell.row) - 4.4,
+        -0.5,
       );
-      rig.targetRot.set(-0.35, Math.PI, 0);
-      rig.targetScale = 0.85;
+      rig.targetRot.set(-0.28, Math.PI * 0.75, 0);
+      rig.targetScale = 0.86;
     }
-    await this.waitMs(260 * tMul);
+    await this.waitMs(175 * tMul);
     if (this.disposed) return;
 
-    // Phase 2: Reposition above board with new initialGrid symbols & deal down
+    // Phase 2: Staggered column cascade deal with brisk spring snap
     for (let col = 0; col < GRID_COLS; col += 1) {
       for (let row = 0; row < GRID_ROWS; row += 1) {
         const rig = this.findRigAt(col, row);
@@ -726,13 +749,14 @@ export class CardSlotStage {
 
         const wx = cellToWorldX(col);
         const wy = cellToWorldY(row);
-        rig.pos.set(wx, wy + 5.6 + (GRID_ROWS - row) * 0.45, 0.25);
-        rig.rot.set(-0.22, Math.PI, 0);
-        rig.scale = 0.92;
-        rig.velY = -2.2;
+        rig.pos.set(wx, wy + 3.8 + (GRID_ROWS - row) * 0.3, 0.16);
+        rig.rot.set(-0.16, -Math.PI * 0.85, 0);
+        rig.scale = 0.94;
+        rig.velY = -4.2;
         rig.springBounce = true;
-        rig.snapped = false;
-        rig.delayTimer = (col * 0.085 + (GRID_ROWS - 1 - row) * 0.032) * tMul;
+        rig.delayTimer = (col * 0.062 + (GRID_ROWS - 1 - row) * 0.02) * tMul;
+        rig.hideWhileDelayed = true;
+        rig.group.visible = rig.delayTimer <= 0.001;
 
         rig.targetPos.set(wx, wy, 0);
         rig.targetRot.set(0, 0, 0);
@@ -740,29 +764,32 @@ export class CardSlotStage {
       }
     }
 
-    // Trigger column snap audio synchronized with drops
     for (let col = 0; col < GRID_COLS; col += 1) {
       const hasSpecial = outcome.initialGrid[col].some((c) =>
         this.isSpecialSymbol(c.symbol),
       );
       window.setTimeout(() => {
         if (!this.disposed) soundEngine.playCardSnap(col, hasSpecial);
-      }, (col * 85 + 150) * tMul);
+      }, (col * 62 + 135) * tMul);
     }
 
-    await this.waitMs(640 * tMul);
+    await this.waitMs(470 * tMul);
     if (this.disposed) return;
 
-    // Phase 3: Cascade Loop
-    let runningBaseWin = 0;
-    for (let stepIdx = 0; stepIdx < outcome.cascades.length; stepIdx += 1) {
-      const step = outcome.cascades[stepIdx];
-      runningBaseWin = Math.round((runningBaseWin + step.stepWin) * 100) / 100;
-      this.callbacks.onCascadeStep?.(stepIdx + 1, step.stepWin, runningBaseWin);
+    // Phase 3: Cascade Loop synced with 2x -> 3x -> 4x -> 6x -> 10x header tiers
+    let runningWin = 0;
+    for (let idx = 0; idx < outcome.cascades.length; idx += 1) {
+      const step = outcome.cascades[idx];
+      runningWin = Math.round((runningWin + step.stepWin) * 100) / 100;
+      this.callbacks.onCascadeStep?.(
+        step.stepIndex,
+        step.tierMultiplier,
+        step.stepWin,
+        runningWin,
+      );
 
-      // Highlight winning scatter cards
-      soundEngine.playScatterWin(stepIdx);
-      this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.35);
+      soundEngine.playScatterWin(idx);
+      this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.32);
       this.winPointLight.intensity = 3.2;
 
       const winPosSet = new Set(
@@ -771,8 +798,8 @@ export class CardSlotStage {
 
       for (const rig of this.cardRigs) {
         if (winPosSet.has(`${rig.cell.col}:${rig.cell.row}`)) {
-          rig.targetPos.z = 0.55;
-          rig.targetScale = 1.09;
+          rig.targetPos.z = 0.52;
+          rig.targetScale = 1.08;
           rig.targetRot.set(-0.08, 0, 0);
           rig.targetHighlight = 1;
           rig.highlightColor.setHex(
@@ -782,31 +809,29 @@ export class CardSlotStage {
             rig.pos.x,
             rig.pos.y,
             0.35,
-            10,
+            8,
             rig.cell.symbol === 'WILD' ? 0x2dd4bf : 0xfacc15,
           );
         }
       }
 
-      await this.waitMs(540 * tMul);
+      await this.waitMs(420 * tMul);
       if (this.disposed) return;
 
-      // Explode / spin-out winning cards
       soundEngine.playCascadeTumble();
       for (const rig of this.cardRigs) {
         if (winPosSet.has(`${rig.cell.col}:${rig.cell.row}`)) {
-          this.emitParticles(rig.pos.x, rig.pos.y, 0.5, 8, 0xfef08a);
+          this.emitParticles(rig.pos.x, rig.pos.y, 0.45, 7, 0xfef08a);
           rig.targetScale = 0.01;
-          rig.targetRot.y = Math.PI * 1.5;
-          rig.targetPos.z = 1.2;
+          rig.targetRot.y = Math.PI * 1.25;
+          rig.targetPos.z = 1.05;
           rig.targetHighlight = 0;
         }
       }
 
-      await this.waitMs(240 * tMul);
+      await this.waitMs(190 * tMul);
       if (this.disposed) return;
 
-      // Re-map surviving rigs + assign new cards above board for dropped slots
       const survivorMoves = new Map<string, CardRig>();
       const recycledRigs: CardRig[] = [];
 
@@ -818,13 +843,13 @@ export class CardSlotStage {
         }
       }
 
-      // Move surviving cards down cleanly
       for (const drop of step.drops) {
         const rig = survivorMoves.get(drop.cell.id);
         if (rig) {
           rig.cell = { ...drop.cell };
           rig.springBounce = true;
-          rig.delayTimer = drop.toCol * 0.03 * tMul;
+          rig.hideWhileDelayed = false;
+          rig.delayTimer = drop.toCol * 0.02 * tMul;
           rig.targetPos.set(
             cellToWorldX(drop.toCol),
             cellToWorldY(drop.toRow),
@@ -835,7 +860,6 @@ export class CardSlotStage {
         }
       }
 
-      // Deal new cards into the top vacant positions using recycled rigs
       for (let i = 0; i < step.newCards.length; i += 1) {
         const nc = step.newCards[i];
         const rig = recycledRigs[i];
@@ -843,12 +867,14 @@ export class CardSlotStage {
         this.applyCellTexture(rig, nc.cell);
         const wx = cellToWorldX(nc.col);
         const wy = cellToWorldY(nc.row);
-        rig.pos.set(wx, wy + 4.4 + (GRID_ROWS - nc.row) * 0.35, 0.15);
-        rig.rot.set(-0.2, Math.PI, 0);
-        rig.scale = 0.9;
-        rig.velY = -1.6;
+        rig.pos.set(wx, wy + 3.4 + (GRID_ROWS - nc.row) * 0.26, 0.14);
+        rig.rot.set(-0.15, -Math.PI * 0.8, 0);
+        rig.scale = 0.92;
+        rig.velY = -3.4;
         rig.springBounce = true;
-        rig.delayTimer = (nc.col * 0.06 + 0.05) * tMul;
+        rig.hideWhileDelayed = true;
+        rig.delayTimer = (nc.col * 0.045 + 0.03) * tMul;
+        rig.group.visible = rig.delayTimer <= 0.001;
         rig.targetPos.set(wx, wy, 0);
         rig.targetRot.set(0, 0, 0);
         rig.targetScale = 1;
@@ -857,38 +883,37 @@ export class CardSlotStage {
 
       window.setTimeout(() => {
         if (!this.disposed) soundEngine.playCardSnap(2, false);
-      }, 220 * tMul);
+      }, 170 * tMul);
 
-      await this.waitMs(500 * tMul);
+      await this.waitMs(390 * tMul);
       if (this.disposed) return;
     }
 
-    // Phase 4: Multiplier Activation Surge (when spin has baseWin > 0 and multiplier cards exist)
-    if (outcome.baseWin > 0 && outcome.boardMultipliers.length > 0) {
-      let runningMult = outcome.appliedMultiplier - outcome.boardMultiplierSum;
+    // Phase 4: Foil Multiplier Surge
+    if (outcome.cascadeSubtotalWin > 0 && outcome.boardMultipliers.length > 0) {
+      let runningExtra = outcome.extraMultiplierFactor - outcome.boardMultiplierSum;
       for (const m of outcome.boardMultipliers) {
-        runningMult += m.value;
+        runningExtra += m.value;
         const rig = this.findRigAt(m.col, m.row);
         if (rig) {
-          rig.targetPos.z = 0.68;
-          rig.targetScale = 1.16;
+          rig.targetPos.z = 0.65;
+          rig.targetScale = 1.15;
           rig.targetHighlight = 1;
           rig.highlightColor.setHex(0xfacc15);
-          this.emitParticles(rig.pos.x, rig.pos.y, 0.5, 16, 0xfacc15);
+          this.emitParticles(rig.pos.x, rig.pos.y, 0.5, 14, 0xfacc15);
         }
-        this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.45);
-        this.winPointLight.intensity = 4.4;
+        this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.42);
+        this.winPointLight.intensity = 4.2;
         soundEngine.playMultiplierHit(m.value);
-        this.callbacks.onMultiplierPulse?.(m.value, runningMult);
-        await this.waitMs(360 * tMul);
+        this.callbacks.onMultiplierPulse?.(m.value, runningExtra);
+        await this.waitMs(300 * tMul);
         if (this.disposed) return;
       }
 
-      // Settle multiplier cards back nicely
       for (const m of outcome.boardMultipliers) {
         const rig = this.findRigAt(m.col, m.row);
         if (rig) {
-          rig.targetPos.z = 0.18;
+          rig.targetPos.z = 0.16;
           rig.targetScale = 1.04;
         }
       }
@@ -897,22 +922,23 @@ export class CardSlotStage {
     // Phase 5: Bonus Scatter Celebration
     if (outcome.awardedFreeSpins > 0) {
       soundEngine.playBonusTrigger();
-      this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.55);
-      this.winPointLight.intensity = 4.8;
+      this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.52);
+      this.winPointLight.intensity = 4.6;
       for (const rig of this.cardRigs) {
         if (rig.cell.symbol === 'BONUS') {
-          rig.targetPos.z = 0.65;
-          rig.targetScale = 1.15;
+          rig.targetPos.z = 0.62;
+          rig.targetScale = 1.14;
           rig.targetHighlight = 1;
           rig.highlightColor.setHex(0xf472b6);
-          this.emitParticles(rig.pos.x, rig.pos.y, 0.5, 18, 0xf472b6);
+          this.emitParticles(rig.pos.x, rig.pos.y, 0.5, 14, 0xf472b6);
         }
       }
-      await this.waitMs(650 * tMul);
+      await this.waitMs(520 * tMul);
     }
 
-    // Reset card positions cleanly to idle
     for (const rig of this.cardRigs) {
+      rig.group.visible = true;
+      rig.hideWhileDelayed = false;
       rig.targetPos.set(
         cellToWorldX(rig.cell.col),
         cellToWorldY(rig.cell.row),
@@ -1000,8 +1026,8 @@ export class CardSlotStage {
     if (rect.width <= 0 || rect.height <= 0) return;
     const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-    this.targetPointerTiltX = THREE.MathUtils.clamp(nx, -1, 1) * 0.24;
-    this.targetPointerTiltY = THREE.MathUtils.clamp(ny, -1, 1) * 0.14;
+    this.targetPointerTiltX = THREE.MathUtils.clamp(nx, -1, 1) * 0.22;
+    this.targetPointerTiltY = THREE.MathUtils.clamp(ny, -1, 1) * 0.12;
   }
 
   private tryInspectCard(e: PointerEvent): void {
@@ -1062,7 +1088,6 @@ export class CardSlotStage {
   };
 
   private updateScene(dt: number): void {
-    // Smooth pointer parallax & title screen slow orbit
     this.pointerTiltX = THREE.MathUtils.damp(
       this.pointerTiltX,
       this.targetPointerTiltX,
@@ -1077,19 +1102,19 @@ export class CardSlotStage {
     );
 
     const titleOrbitX =
-      this.mode === 'title' ? Math.sin(this.elapsedTime * 0.42) * 0.75 : 0;
+      this.mode === 'title' ? Math.sin(this.elapsedTime * 0.42) * 0.72 : 0;
     const titleOrbitY =
-      this.mode === 'title' ? Math.cos(this.elapsedTime * 0.28) * 0.18 : 0;
+      this.mode === 'title' ? Math.cos(this.elapsedTime * 0.28) * 0.16 : 0;
 
-    // Decaying trauma shake
-    this.shakeTrauma = Math.max(0, this.shakeTrauma - dt * 1.8);
-    const shakeAmt = this.shakeTrauma * this.shakeTrauma * 0.14;
+    this.shakeTrauma = Math.max(0, this.shakeTrauma - dt * 2.1);
+    const shakeAmt = this.shakeTrauma * this.shakeTrauma * 0.13;
     const shakeX = shakeAmt * Math.sin(this.elapsedTime * 48);
     const shakeY = shakeAmt * Math.cos(this.elapsedTime * 57);
 
-    const desiredCamX = this.baseCamPos.x + this.pointerTiltX + titleOrbitX + shakeX;
-    const desiredCamY = this.baseCamPos.y + this.pointerTiltY + titleOrbitY + shakeY;
-    const desiredCamZ = this.baseCamPos.z;
+    const desiredCamX =
+      this.baseCamPos.x + this.pointerTiltX + titleOrbitX + shakeX;
+    const desiredCamY =
+      this.baseCamPos.y + this.pointerTiltY + titleOrbitY + shakeY;
 
     this.camera.position.x = THREE.MathUtils.damp(
       this.camera.position.x,
@@ -1105,7 +1130,7 @@ export class CardSlotStage {
     );
     this.camera.position.z = THREE.MathUtils.damp(
       this.camera.position.z,
-      desiredCamZ,
+      this.baseCamPos.z,
       7,
       dt,
     );
@@ -1124,15 +1149,13 @@ export class CardSlotStage {
     );
     this.camera.lookAt(this.currentLookTarget);
 
-    // Decay golden win point light
     this.winPointLight.intensity = THREE.MathUtils.damp(
       this.winPointLight.intensity,
       0,
-      4.2,
+      4.5,
       dt,
     );
 
-    // Inspection timer
     if (this.inspectTimer > 0) {
       this.inspectTimer -= dt;
       if (this.inspectTimer <= 0) {
@@ -1140,19 +1163,23 @@ export class CardSlotStage {
       }
     }
 
-    // Update all 15 card rigs
     for (let i = 0; i < this.cardRigs.length; i += 1) {
       const rig = this.cardRigs[i];
       if (rig.delayTimer > 0) {
         rig.delayTimer = Math.max(0, rig.delayTimer - dt);
+        if (rig.hideWhileDelayed) {
+          rig.group.visible = false;
+        }
         continue;
       }
+      rig.group.visible = true;
+      rig.hideWhileDelayed = false;
 
       const isInspected =
         this.mode === 'idle' && rig.cell.id === this.inspectedCardId;
       const idleFloatZ =
         this.mode !== 'spinning'
-          ? Math.sin(this.elapsedTime * 1.8 + rig.phaseOffset) * 0.032
+          ? Math.sin(this.elapsedTime * 1.8 + rig.phaseOffset) * 0.028
           : 0;
       const idleRotY =
         this.mode === 'title'
@@ -1161,62 +1188,66 @@ export class CardSlotStage {
 
       const goalX = rig.targetPos.x;
       const goalY = rig.targetPos.y;
-      const goalZ = rig.targetPos.z + idleFloatZ + (isInspected ? 0.58 : 0);
+      const goalZ = rig.targetPos.z + idleFloatZ + (isInspected ? 0.56 : 0);
 
-      rig.pos.x = THREE.MathUtils.damp(rig.pos.x, goalX, 14, dt);
-      rig.pos.z = THREE.MathUtils.damp(rig.pos.z, goalZ, 12, dt);
+      rig.pos.x = THREE.MathUtils.damp(rig.pos.x, goalX, 18, dt);
+      rig.pos.z = THREE.MathUtils.damp(rig.pos.z, goalZ, 16, dt);
 
       if (rig.springBounce) {
-        // Underdamped spring along Y for crisp mechanical card drop bounce
-        const stiffness = 175;
-        const damping = 16;
+        const stiffness = 340;
+        const damping = 24;
         const force = (goalY - rig.pos.y) * stiffness;
         rig.velY += force * dt;
         rig.velY *= Math.exp(-damping * dt);
         rig.pos.y += rig.velY * dt;
         if (
-          Math.abs(goalY - rig.pos.y) < 0.004 &&
-          Math.abs(rig.velY) < 0.02
+          Math.abs(goalY - rig.pos.y) < 0.005 &&
+          Math.abs(rig.velY) < 0.03
         ) {
           rig.pos.y = goalY;
           rig.velY = 0;
           rig.springBounce = false;
         }
       } else {
-        rig.pos.y = THREE.MathUtils.damp(rig.pos.y, goalY, 13, dt);
+        rig.pos.y = THREE.MathUtils.damp(rig.pos.y, goalY, 17, dt);
       }
 
       const goalRotX = rig.targetRot.x + (isInspected ? -0.1 : 0);
       const goalRotY =
-        rig.targetRot.y + idleRotY + (isInspected ? Math.sin(this.elapsedTime * 3) * 0.14 : 0);
+        rig.targetRot.y +
+        idleRotY +
+        (isInspected ? Math.sin(this.elapsedTime * 3) * 0.14 : 0);
       const goalRotZ = rig.targetRot.z;
 
-      rig.rot.x = THREE.MathUtils.damp(rig.rot.x, goalRotX, 11, dt);
-      rig.rot.y = THREE.MathUtils.damp(rig.rot.y, goalRotY, 10, dt);
-      rig.rot.z = THREE.MathUtils.damp(rig.rot.z, goalRotZ, 12, dt);
+      rig.rot.x = THREE.MathUtils.damp(rig.rot.x, goalRotX, 16, dt);
+      rig.rot.y = THREE.MathUtils.damp(rig.rot.y, goalRotY, 16, dt);
+      rig.rot.z = THREE.MathUtils.damp(rig.rot.z, goalRotZ, 16, dt);
 
       const goalScale = rig.targetScale * (isInspected ? 1.1 : 1);
-      rig.scale = THREE.MathUtils.damp(rig.scale, goalScale, 14, dt);
+      rig.scale = THREE.MathUtils.damp(rig.scale, goalScale, 18, dt);
 
       rig.group.position.copy(rig.pos);
       rig.group.rotation.set(rig.rot.x, rig.rot.y, rig.rot.z);
       rig.group.scale.setScalar(rig.scale);
 
-      // Halo glow interpolation
       const goalHalo = isInspected ? 0.9 : rig.targetHighlight;
       rig.highlightIntensity = THREE.MathUtils.damp(
         rig.highlightIntensity,
         goalHalo,
-        10,
+        14,
         dt,
       );
-      rig.haloMat.color.copy(rig.highlightColor);
-      rig.haloMat.emissive.copy(rig.highlightColor);
-      rig.haloMat.emissiveIntensity = rig.highlightIntensity * 1.4;
-      rig.haloMat.opacity = rig.highlightIntensity;
+      if (rig.highlightIntensity > 0.015) {
+        rig.haloMesh.visible = true;
+        rig.haloMat.color.copy(rig.highlightColor);
+        rig.haloMat.emissive.copy(rig.highlightColor);
+        rig.haloMat.emissiveIntensity = rig.highlightIntensity * 1.4;
+        rig.haloMat.opacity = rig.highlightIntensity;
+      } else {
+        rig.haloMesh.visible = false;
+      }
     }
 
-    // Update pooled particles
     let anyParticles = false;
     for (let i = 0; i < this.particleCount; i += 1) {
       const p = this.particles[i];
@@ -1231,7 +1262,7 @@ export class CardSlotStage {
         continue;
       }
 
-      p.vy -= 5.8 * dt;
+      p.vy -= 6.2 * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       p.z += p.vz * dt;

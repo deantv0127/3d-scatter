@@ -64,6 +64,31 @@ export const PaytableModal: React.FC<PaytableModalProps> = ({
         </div>
 
         <div className="overflow-y-auto px-5 py-4 space-y-6">
+          {/* Grid Cascade Multiplier Trail */}
+          <section className="p-3.5 rounded-xl bg-[#121927] border border-amber-400/20">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-amber-300">
+                Cascade Grid Multipliers
+              </h3>
+              <div className="flex items-center gap-1.5 font-mono-num text-xs font-bold text-amber-200">
+                <span>2×</span>
+                <span className="text-stone-500">→</span>
+                <span>3×</span>
+                <span className="text-stone-500">→</span>
+                <span>4×</span>
+                <span className="text-stone-500">→</span>
+                <span>6×</span>
+                <span className="text-stone-500">→</span>
+                <span>10×</span>
+              </div>
+            </div>
+            <p className="text-xs text-stone-400 mt-1.5 leading-relaxed">
+              Each consecutive scatter cascade advances the multiplier rail above
+              the grid from 2× up to 10×. Any Foil Multiplier seals on the board
+              multiply on top of your cascade total.
+            </p>
+          </section>
+
           {/* Special Cards */}
           <section>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-3">

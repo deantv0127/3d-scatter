@@ -12,6 +12,17 @@ export type SymbolId =
 
 export type MultiplierValue = 2 | 3 | 5 | 10 | 25;
 
+export const CASCADE_MULTIPLIER_TIERS = [2, 3, 4, 6, 10] as const;
+export type CascadeTierMultiplier = (typeof CASCADE_MULTIPLIER_TIERS)[number];
+
+export function getCascadeTierMultiplier(cascadeIndex: number): CascadeTierMultiplier {
+  const clamped = Math.max(
+    0,
+    Math.min(CASCADE_MULTIPLIER_TIERS.length - 1, cascadeIndex),
+  );
+  return CASCADE_MULTIPLIER_TIERS[clamped];
+}
+
 export interface CardCellData {
   id: string;
   col: number;
@@ -29,8 +40,11 @@ export interface WinningGroup {
 }
 
 export interface CascadeStep {
+  stepIndex: number;
+  tierMultiplier: CascadeTierMultiplier;
   gridBefore: CardCellData[][];
   winningGroups: WinningGroup[];
+  rawStepWin: number;
   stepWin: number;
   removedPositions: Array<{ col: number; row: number }>;
   drops: Array<{
@@ -52,14 +66,15 @@ export interface SpinOutcome {
   initialGrid: CardCellData[][];
   cascades: CascadeStep[];
   finalGrid: CardCellData[][];
-  baseWin: number;
+  peakTierMultiplier: number;
+  cascadeSubtotalWin: number;
   boardMultipliers: Array<{
     col: number;
     row: number;
     value: MultiplierValue;
   }>;
   boardMultiplierSum: number;
-  appliedMultiplier: number;
+  extraMultiplierFactor: number;
   totalWin: number;
   bonusCount: number;
   awardedFreeSpins: number;
@@ -90,10 +105,10 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
     minMatch: 6,
     accentHex: '#38bdf8',
     payouts: [
-      { count: 6, mult: 0.6 },
-      { count: 7, mult: 1.2 },
-      { count: 8, mult: 2.4 },
-      { count: 9, mult: 4.5 },
+      { count: 6, mult: 0.4 },
+      { count: 7, mult: 0.8 },
+      { count: 8, mult: 1.5 },
+      { count: 9, mult: 3.0 },
     ],
     description: 'Match 6 or more anywhere on the table to trigger a scatter cascade.',
   },
@@ -105,10 +120,10 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
     minMatch: 6,
     accentHex: '#34d399',
     payouts: [
-      { count: 6, mult: 0.8 },
-      { count: 7, mult: 1.6 },
-      { count: 8, mult: 3.0 },
-      { count: 9, mult: 5.5 },
+      { count: 6, mult: 0.5 },
+      { count: 7, mult: 1.0 },
+      { count: 8, mult: 2.0 },
+      { count: 9, mult: 3.8 },
     ],
     description: 'Match 6 or more anywhere on the table to trigger a scatter cascade.',
   },
@@ -120,10 +135,10 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
     minMatch: 6,
     accentHex: '#fb7185',
     payouts: [
-      { count: 6, mult: 1.0 },
-      { count: 7, mult: 2.0 },
-      { count: 8, mult: 3.8 },
-      { count: 9, mult: 7.5 },
+      { count: 6, mult: 0.65 },
+      { count: 7, mult: 1.3 },
+      { count: 8, mult: 2.5 },
+      { count: 9, mult: 4.8 },
     ],
     description: 'Match 6 or more anywhere on the table to trigger a scatter cascade.',
   },
@@ -135,10 +150,10 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
     minMatch: 6,
     accentHex: '#cbd5e1',
     payouts: [
-      { count: 6, mult: 1.4 },
-      { count: 7, mult: 2.8 },
-      { count: 8, mult: 5.2 },
-      { count: 9, mult: 10.0 },
+      { count: 6, mult: 0.85 },
+      { count: 7, mult: 1.7 },
+      { count: 8, mult: 3.4 },
+      { count: 9, mult: 6.5 },
     ],
     description: 'Match 6 or more anywhere on the table to trigger a scatter cascade.',
   },
@@ -150,10 +165,10 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
     minMatch: 5,
     accentHex: '#c084fc',
     payouts: [
-      { count: 5, mult: 1.8 },
-      { count: 6, mult: 3.6 },
-      { count: 7, mult: 7.0 },
-      { count: 8, mult: 14.0 },
+      { count: 5, mult: 1.1 },
+      { count: 6, mult: 2.2 },
+      { count: 7, mult: 4.4 },
+      { count: 8, mult: 8.5 },
     ],
     description: 'Royal card. Match 5 or more anywhere for high scatter payouts.',
   },
@@ -165,10 +180,10 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
     minMatch: 5,
     accentHex: '#fbbf24',
     payouts: [
-      { count: 5, mult: 2.5 },
-      { count: 6, mult: 5.0 },
-      { count: 7, mult: 9.5 },
-      { count: 8, mult: 20.0 },
+      { count: 5, mult: 1.5 },
+      { count: 6, mult: 3.0 },
+      { count: 7, mult: 6.0 },
+      { count: 8, mult: 12.0 },
     ],
     description: 'Royal card. Match 5 or more anywhere for sovereign payouts.',
   },
@@ -180,10 +195,10 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
     minMatch: 4,
     accentHex: '#f59e0b',
     payouts: [
-      { count: 4, mult: 3.0 },
-      { count: 5, mult: 6.5 },
-      { count: 6, mult: 13.0 },
-      { count: 7, mult: 30.0 },
+      { count: 4, mult: 1.8 },
+      { count: 5, mult: 3.8 },
+      { count: 6, mult: 7.5 },
+      { count: 7, mult: 16.0 },
     ],
     description: 'Top royal card. Pays with just 4 or more anywhere on the board.',
   },
@@ -205,7 +220,7 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
     minMatch: 1,
     accentHex: '#facc15',
     payouts: [],
-    description: 'Carries 2× to 25×. Sums with all multipliers on any winning spin.',
+    description: 'Carries 2× to 25×. Multiplies on top of the active grid multiplier trail.',
   },
   BONUS: {
     id: 'BONUS',

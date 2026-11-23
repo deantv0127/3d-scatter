@@ -3,7 +3,10 @@ import {
   ChevronDown,
   ChevronUp,
   HelpCircle,
+  Mic,
+  MicOff,
   Minus,
+  Music,
   Plus,
   RefreshCw,
   Repeat,
@@ -20,6 +23,8 @@ import { resolveSpinOutcome } from './game/slotEngine';
 import {
   BET_STEPS,
   CardCellData,
+  CASCADE_MULTIPLIER_TIERS,
+  CascadeTierMultiplier,
   MultiplierValue,
   SYMBOL_METADATA,
 } from './game/types';
@@ -30,7 +35,7 @@ interface WinBannerState {
   visible: boolean;
   label: string;
   amount: number;
-  multiplier: number;
+  extraMultiplier: number;
   isBig: boolean;
 }
 
@@ -45,11 +50,17 @@ export default function App() {
   const [turboMode, setTurboMode] = useState<boolean>(false);
   const [autoPlay, setAutoPlay] = useState<boolean>(false);
   const [muted, setMuted] = useState<boolean>(false);
+  const [musicEnabled, setMusicEnabled] = useState<boolean>(true);
+  const [voiceEnabled, setVoiceEnabled] = useState<boolean>(true);
   const [dockCollapsed, setDockCollapsed] = useState<boolean>(false);
   const [showPaytable, setShowPaytable] = useState<boolean>(false);
   const [contextLost, setContextLost] = useState<boolean>(false);
 
-  // Free Spins & Multiplier Progression
+  // Grid Window Cascade Multiplier Progression (2x, 3x, 4x, 6x, 10x)
+  const [activeCascadeIndex, setActiveCascadeIndex] = useState<number>(-1);
+  const [activeFoilBoost, setActiveFoilBoost] = useState<number>(1);
+
+  // Free Spins & Foil Multiplier Progression
   const [freeSpinsLeft, setFreeSpinsLeft] = useState<number>(0);
   const [freeSpinGlobalMult, setFreeSpinGlobalMult] = useState<number>(0);
   const [freeSpinRoundWin, setFreeSpinRoundWin] = useState<number>(0);
@@ -61,13 +72,12 @@ export default function App() {
     visible: false,
     label: '',
     amount: 0,
-    multiplier: 1,
+    extraMultiplier: 1,
     isBig: false,
   });
   const [bonusBannerText, setBonusBannerText] = useState<string | null>(null);
   const [inspectedCard, setInspectedCard] = useState<CardCellData | null>(null);
 
-  // Mutable refs for latest values inside async spin flow & keyboard listeners
   const stateRef = useRef({
     phase,
     balance,
@@ -95,10 +105,10 @@ export default function App() {
 
   const inspectTimeoutRef = useRef<number | null>(null);
   const winAnimRef = useRef<number | null>(null);
+  const voiceTimeoutRef = useRef<number | null>(null);
 
   const currentBet = BET_STEPS[betIndex];
 
-  // Mount isolated Three.js stage once
   useEffect(() => {
     const mount = canvasMountRef.current;
     if (!mount) return;
@@ -113,21 +123,30 @@ export default function App() {
           setInspectedCard(null);
         }, 2600);
       },
-      onCascadeStep: (stepIndex, _stepWin, runningBaseWin) => {
+      onCascadeStep: (
+        stepIndex: number,
+        tierMultiplier: CascadeTierMultiplier,
+        _stepWin: number,
+        runningWin: number,
+      ) => {
+        setActiveCascadeIndex(stepIndex);
+        soundEngine.announceMultiplier(tierMultiplier, tierMultiplier === 10);
         setWinBanner({
           visible: true,
-          label: stepIndex > 1 ? `Cascade ×${stepIndex}` : 'Scatter Win',
-          amount: runningBaseWin,
-          multiplier: 1,
+          label: `Cascade ${stepIndex + 1} · ${tierMultiplier}× Grid`,
+          amount: runningWin,
+          extraMultiplier: 1,
           isBig: false,
         });
       },
-      onMultiplierPulse: (value: MultiplierValue, totalApplied: number) => {
+      onMultiplierPulse: (value: MultiplierValue, totalExtraFactor: number) => {
+        setActiveFoilBoost(totalExtraFactor);
+        soundEngine.announceFoilMultiplier(totalExtraFactor);
         setWinBanner((prev) => ({
           ...prev,
           visible: true,
           label: `Foil Seal +${value}×`,
-          multiplier: totalApplied,
+          extraMultiplier: totalExtraFactor,
         }));
       },
       onContextLostChange: (lost) => {
@@ -140,13 +159,23 @@ export default function App() {
       if (inspectTimeoutRef.current) {
         window.clearTimeout(inspectTimeoutRef.current);
       }
+      if (voiceTimeoutRef.current) {
+        window.clearTimeout(voiceTimeoutRef.current);
+      }
       if (winAnimRef.current) {
         cancelAnimationFrame(winAnimRef.current);
       }
+      soundEngine.stopMusic();
+      soundEngine.stopSpeech();
       stage.dispose();
       stageRef.current = null;
     };
   }, []);
+
+  // Sync free spin mood for background slot music
+  useEffect(() => {
+    soundEngine.setFreeSpinMood(freeSpinsLeft > 0);
+  }, [freeSpinsLeft]);
 
   const animateWinCounter = useCallback((target: number) => {
     if (winAnimRef.current) {
@@ -156,15 +185,14 @@ export default function App() {
       setDisplayWin(0);
       return;
     }
-    const startVal = 0;
-    const duration = Math.min(950, Math.max(320, target * 6));
+    const duration = Math.min(900, Math.max(300, target * 6));
     const startTime = performance.now();
     let tickStep = 0;
 
     const step = (now: number) => {
       const t = Math.min(1, (now - startTime) / duration);
       const eased = 1 - Math.pow(1 - t, 3);
-      const val = startVal + (target - startVal) * eased;
+      const val = target * eased;
       setDisplayWin(val);
       if (t < 1) {
         if (Math.floor(t * 10) > tickStep) {
@@ -182,6 +210,7 @@ export default function App() {
   const handleStartGame = useCallback(() => {
     soundEngine.unlock();
     soundEngine.playClick();
+    soundEngine.startMusic();
     setPhase('playing');
     stageRef.current?.setMode('idle');
   }, []);
@@ -200,15 +229,23 @@ export default function App() {
       return;
     }
 
+    if (voiceTimeoutRef.current) {
+      window.clearTimeout(voiceTimeoutRef.current);
+      voiceTimeoutRef.current = null;
+    }
+
     soundEngine.unlock();
+    soundEngine.startMusic();
     setIsSpinning(true);
+    setActiveCascadeIndex(-1);
+    setActiveFoilBoost(inFreeSpin && s.freeSpinGlobalMult > 0 ? s.freeSpinGlobalMult : 1);
     setInspectedCard(null);
     setBonusBannerText(null);
     setWinBanner({
       visible: false,
       label: '',
       amount: 0,
-      multiplier: 1,
+      extraMultiplier: 1,
       isBig: false,
     });
 
@@ -235,12 +272,25 @@ export default function App() {
         visible: true,
         label: isBig ? 'Sovereign Win' : 'Total Win',
         amount: outcome.totalWin,
-        multiplier: outcome.appliedMultiplier,
+        extraMultiplier: outcome.extraMultiplierFactor,
         isBig,
       });
 
+      const effectivePeakMult =
+        outcome.extraMultiplierFactor > 1
+          ? outcome.peakTierMultiplier * outcome.extraMultiplierFactor
+          : outcome.peakTierMultiplier;
+
+      if (outcome.awardedFreeSpins === 0) {
+        voiceTimeoutRef.current = window.setTimeout(() => {
+          soundEngine.announceWin(outcome.totalWin, effectivePeakMult, isBig);
+        }, 260);
+      }
+
       if (inFreeSpin) {
-        setFreeSpinRoundWin((prev) => Math.round((prev + outcome.totalWin) * 100) / 100);
+        setFreeSpinRoundWin(
+          (prev) => Math.round((prev + outcome.totalWin) * 100) / 100,
+        );
         if (outcome.boardMultiplierSum > 0) {
           setFreeSpinGlobalMult((prev) => prev + outcome.boardMultiplierSum);
         }
@@ -257,19 +307,18 @@ export default function App() {
           ? `+${outcome.awardedFreeSpins} Extra Free Spins`
           : `Arcana Vault Unlocked · ${outcome.awardedFreeSpins} Free Spins`,
       );
+      soundEngine.announceBonus(outcome.awardedFreeSpins, inFreeSpin);
       if (!inFreeSpin) {
         setFreeSpinGlobalMult(Math.max(1, outcome.boardMultiplierSum));
         setFreeSpinRoundWin(0);
       }
     } else if (inFreeSpin && s.freeSpinsLeft - 1 === 0) {
-      // Final free spin completed
       setFreeSpinGlobalMult(0);
     }
 
     setIsSpinning(false);
   }, [animateWinCounter]);
 
-  // Autoplay / Free Spins continuation loop
   useEffect(() => {
     if (isSpinning || phase !== 'playing' || showPaytable) return;
     if (freeSpinsLeft > 0 || autoPlay) {
@@ -278,7 +327,7 @@ export default function App() {
         setAutoPlay(false);
         return;
       }
-      const delay = turboMode ? 320 : 620;
+      const delay = turboMode ? 320 : 640;
       const timer = window.setTimeout(() => {
         void executeSpin();
       }, delay);
@@ -296,7 +345,6 @@ export default function App() {
     executeSpin,
   ]);
 
-  // Keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const s = stateRef.current;
@@ -330,6 +378,14 @@ export default function App() {
     setMuted(soundEngine.toggleMute());
   };
 
+  const handleToggleMusic = () => {
+    setMusicEnabled(soundEngine.toggleMusic());
+  };
+
+  const handleToggleVoice = () => {
+    setVoiceEnabled(soundEngine.toggleVoice());
+  };
+
   const handleStepBet = (dir: -1 | 1) => {
     if (isSpinning || freeSpinsLeft > 0) return;
     soundEngine.playClick();
@@ -346,6 +402,17 @@ export default function App() {
 
   const canSpin = !isSpinning && (freeSpinsLeft > 0 || balance >= currentBet);
   const needsRefill = !isSpinning && freeSpinsLeft === 0 && balance < currentBet;
+
+  const clampedTierIdx = Math.min(
+    activeCascadeIndex,
+    CASCADE_MULTIPLIER_TIERS.length - 1,
+  );
+  const activeGridTierMult =
+    clampedTierIdx >= 0 ? CASCADE_MULTIPLIER_TIERS[clampedTierIdx] : 1;
+  const progressPercent =
+    clampedTierIdx >= 0
+      ? ((clampedTierIdx + 1) / CASCADE_MULTIPLIER_TIERS.length) * 100
+      : 0;
 
   return (
     <div className="relative w-full h-[100dvh] overflow-hidden bg-[#070a10] select-none">
@@ -373,104 +440,198 @@ export default function App() {
       {/* Active Game HUD */}
       {phase === 'playing' && (
         <div className="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between">
-          {/* Top Compact Perimeter Bar */}
-          <header className="pt-safe px-3 sm:px-6 pt-2.5 flex items-center justify-between gap-3">
-            {/* Balance & Active Bonus Readout */}
-            <div className="pointer-events-auto flex items-center gap-3 sm:gap-4 px-3.5 py-2 rounded-xl bg-[#0b101b]/88 border border-amber-400/20 shadow-lg">
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-stone-400 leading-none">
-                  Balance
-                </div>
-                <div className="font-mono-num text-sm sm:text-base font-bold text-stone-100 mt-1 leading-none">
-                  ${balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </div>
-              </div>
-
-              <div className="sm:hidden flex items-center gap-3">
-                <div className="h-6 w-px bg-white/15" aria-hidden="true" />
+          {/* Top Compact Perimeter Bar + Premium Grid Multiplier Indicator */}
+          <div className="pt-safe px-3 sm:px-6 pt-2 flex flex-col items-center gap-2">
+            <header className="w-full flex items-center justify-between gap-2 sm:gap-3">
+              {/* Balance, Mobile Win & Active Bonus Readout */}
+              <div className="pointer-events-auto flex items-center gap-2.5 sm:gap-4 px-3 py-2 rounded-xl bg-[#0b101b]/92 border border-amber-400/20 shadow-lg">
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-stone-400 leading-none">
-                    Win
+                    Balance
                   </div>
-                  <div
-                    className={`font-mono-num text-sm font-bold mt-1 leading-none ${
-                      lastWin > 0 ? 'text-emerald-300' : 'text-stone-400'
-                    }`}
-                  >
-                    ${displayWin.toFixed(2)}
+                  <div className="font-mono-num text-sm sm:text-base font-bold text-stone-100 mt-1 leading-none">
+                    ${balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 </div>
-              </div>
 
-              {freeSpinsLeft > 0 && (
-                <>
+                <div className="sm:hidden flex items-center gap-2.5">
                   <div className="h-6 w-px bg-white/15" aria-hidden="true" />
                   <div>
-                    <div className="text-[10px] uppercase tracking-wider text-fuchsia-300 leading-none">
-                      Free Spins
+                    <div className="text-[10px] uppercase tracking-wider text-stone-400 leading-none">
+                      Win
                     </div>
-                    <div className="font-mono-num text-sm sm:text-base font-bold text-fuchsia-200 mt-1 leading-none">
-                      {freeSpinsLeft} left
-                      {freeSpinGlobalMult > 0 ? ` · ${freeSpinGlobalMult}×` : ''}
+                    <div
+                      className={`font-mono-num text-sm font-bold mt-1 leading-none ${
+                        lastWin > 0 ? 'text-emerald-300' : 'text-stone-400'
+                      }`}
+                    >
+                      ${displayWin.toFixed(2)}
                     </div>
                   </div>
-                </>
-              )}
-            </div>
+                </div>
 
-            {/* Right Utility Controls (>= 44px touch targets) */}
-            <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  soundEngine.playClick();
-                  setTurboMode((v) => !v);
-                }}
-                aria-label="Toggle turbo spin speed"
-                aria-pressed={turboMode}
-                title="Turbo Spin (T)"
-                className={`min-w-[44px] min-h-[44px] px-2.5 flex items-center justify-center gap-1.5 rounded-xl border text-xs font-medium transition-colors cursor-pointer ${
-                  turboMode
-                    ? 'bg-amber-500/20 border-amber-400/60 text-amber-300'
-                    : 'bg-[#0b101b]/88 border-white/15 text-stone-300 hover:text-white'
-                }`}
-              >
-                <Zap className="w-4 h-4" />
-                <span className="hidden sm:inline">Turbo</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  soundEngine.playClick();
-                  setShowPaytable(true);
-                }}
-                aria-label="Open paytable and rules"
-                title="Paytable"
-                className="min-w-[44px] min-h-[44px] px-2.5 flex items-center justify-center gap-1.5 rounded-xl bg-[#0b101b]/88 border border-white/15 text-stone-300 hover:text-white transition-colors cursor-pointer"
-              >
-                <HelpCircle className="w-4 h-4" />
-                <span className="hidden sm:inline text-xs font-medium">Rules</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleToggleMute}
-                aria-label={muted ? 'Unmute sound effects' : 'Mute sound effects'}
-                title="Mute / Unmute (M)"
-                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-[#0b101b]/88 border border-white/15 text-stone-300 hover:text-white transition-colors cursor-pointer"
-              >
-                {muted ? (
-                  <VolumeX className="w-4 h-4 text-rose-400" />
-                ) : (
-                  <Volume2 className="w-4 h-4 text-emerald-300" />
+                {freeSpinsLeft > 0 && (
+                  <>
+                    <div className="h-6 w-px bg-white/15" aria-hidden="true" />
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-fuchsia-300 leading-none">
+                        Free Spins
+                      </div>
+                      <div className="font-mono-num text-sm sm:text-base font-bold text-fuchsia-200 mt-1 leading-none">
+                        {freeSpinsLeft} left
+                        {freeSpinGlobalMult > 0 ? ` · +${freeSpinGlobalMult}×` : ''}
+                      </div>
+                    </div>
+                  </>
                 )}
-              </button>
-            </div>
-          </header>
+              </div>
 
-          {/* Non-Blocking Upper Win / Multiplier Callout Zone */}
-          <div className="flex flex-col items-center justify-start pt-2 px-4 pointer-events-none">
+              {/* Right Utility & Audio Controls (>= 44px touch targets) */}
+              <div className="pointer-events-auto flex items-center gap-1 sm:gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playClick();
+                    setTurboMode((v) => !v);
+                  }}
+                  aria-label="Toggle turbo spin speed"
+                  aria-pressed={turboMode}
+                  title="Turbo Spin (T)"
+                  className={`min-w-[44px] min-h-[44px] px-2.5 flex items-center justify-center gap-1.5 rounded-xl border text-xs font-medium transition-colors cursor-pointer ${
+                    turboMode
+                      ? 'bg-amber-500/20 border-amber-400/60 text-amber-300'
+                      : 'bg-[#0b101b]/92 border-white/15 text-stone-300 hover:text-white'
+                  }`}
+                >
+                  <Zap className="w-4 h-4" />
+                  <span className="hidden md:inline">Turbo</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleToggleMusic}
+                  aria-label={musicEnabled ? 'Disable slot music' : 'Enable slot music'}
+                  aria-pressed={musicEnabled}
+                  title="Background Music"
+                  className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl border transition-colors cursor-pointer ${
+                    musicEnabled && !muted
+                      ? 'bg-amber-500/15 border-amber-400/45 text-amber-300'
+                      : 'bg-[#0b101b]/92 border-white/15 text-stone-500 hover:text-stone-300'
+                  }`}
+                >
+                  <Music className="w-4 h-4" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleToggleVoice}
+                  aria-label={voiceEnabled ? 'Disable voice announcer' : 'Enable voice announcer'}
+                  aria-pressed={voiceEnabled}
+                  title="Voice Announcer"
+                  className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl border transition-colors cursor-pointer ${
+                    voiceEnabled && !muted
+                      ? 'bg-amber-500/15 border-amber-400/45 text-amber-300'
+                      : 'bg-[#0b101b]/92 border-white/15 text-stone-500 hover:text-stone-300'
+                  }`}
+                >
+                  {voiceEnabled && !muted ? (
+                    <Mic className="w-4 h-4" />
+                  ) : (
+                    <MicOff className="w-4 h-4" />
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playClick();
+                    setShowPaytable(true);
+                  }}
+                  aria-label="Open paytable and rules"
+                  title="Paytable"
+                  className="min-w-[44px] min-h-[44px] px-2.5 flex items-center justify-center gap-1.5 rounded-xl bg-[#0b101b]/92 border border-white/15 text-stone-300 hover:text-white transition-colors cursor-pointer"
+                >
+                  <HelpCircle className="w-4 h-4" />
+                  <span className="hidden md:inline text-xs font-medium">Rules</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleToggleMute}
+                  aria-label={muted ? 'Unmute all audio' : 'Mute all audio'}
+                  title="Mute All (M)"
+                  className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-[#0b101b]/92 border border-white/15 text-stone-300 hover:text-white transition-colors cursor-pointer"
+                >
+                  {muted ? (
+                    <VolumeX className="w-4 h-4 text-rose-400" />
+                  ) : (
+                    <Volume2 className="w-4 h-4 text-emerald-300" />
+                  )}
+                </button>
+              </div>
+            </header>
+
+            {/* Luxury Cabinet Multiplier Indicator Above Grid Window */}
+            <div
+              className="w-full max-w-[500px] rounded-2xl bg-gradient-to-b from-[#151d2e] to-[#0a0f19] border border-amber-400/40 shadow-[0_12px_32px_rgba(0,0,0,0.65)] p-2"
+              aria-label="Cascade multiplier status indicator"
+            >
+              {/* Status Title & Active Multiplier Readout */}
+              <div className="flex items-center justify-between px-1.5 pb-1.5 border-b border-amber-400/15">
+                <span className="font-display text-[11px] sm:text-xs font-bold tracking-[0.18em] uppercase text-amber-200/90">
+                  Multiplier Status
+                </span>
+                <span className="font-mono-num text-xs font-bold text-amber-300">
+                  {activeGridTierMult > 1 ? (
+                    <>
+                      {activeGridTierMult}× Active
+                      {activeFoilBoost > 1 ? ` · +${activeFoilBoost}× Foil` : ''}
+                    </>
+                  ) : freeSpinGlobalMult > 0 ? (
+                    `Vault +${freeSpinGlobalMult}× Ready`
+                  ) : (
+                    '1× Ready'
+                  )}
+                </span>
+              </div>
+
+              {/* 5-Stage Illuminated Multiplier Rail: 2x, 3x, 4x, 6x, 10x */}
+              <div className="grid grid-cols-5 gap-1.5 pt-1.5">
+                {CASCADE_MULTIPLIER_TIERS.map((tier, idx) => {
+                  const isCurrent = clampedTierIdx === idx;
+                  const isPassed = clampedTierIdx > idx;
+                  const isMax = tier === 10;
+                  return (
+                    <div
+                      key={tier}
+                      className={`relative rounded-xl py-1.5 px-1 text-center font-mono-num text-xs sm:text-sm font-bold border transition-transform duration-150 ${
+                        isCurrent
+                          ? 'bg-gradient-to-b from-amber-300 via-amber-400 to-amber-600 border-amber-200 text-stone-950 scale-[1.05] shadow-[0_0_18px_rgba(245,158,11,0.5)]'
+                          : isPassed
+                            ? 'bg-gradient-to-b from-amber-500/25 to-amber-600/15 border-amber-400/45 text-amber-200'
+                            : isMax
+                              ? 'bg-gradient-to-b from-[#1e1a12] to-[#110f0b] border-amber-500/30 text-amber-300/75'
+                              : 'bg-gradient-to-b from-[#161e2e] to-[#0d121d] border-white/10 text-stone-400'
+                      }`}
+                    >
+                      {tier}×
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Precision Progress Meter */}
+              <div className="mt-1.5 h-1 w-full rounded-full bg-[#070a10] overflow-hidden border border-white/5">
+                <div
+                  className="h-full bg-gradient-to-r from-amber-500 via-amber-300 to-yellow-200 transition-all duration-200"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Non-Blocking Upper Win / Bonus Callout Zone */}
+          <div className="flex flex-col items-center justify-start pt-1 px-4 pointer-events-none">
             {bonusBannerText && (
               <div className="mb-1.5 px-4 py-1.5 rounded-xl bg-[#1f0c24]/92 border border-fuchsia-400/50 text-fuchsia-200 font-display text-xs sm:text-sm font-bold tracking-wider uppercase shadow-lg">
                 {bonusBannerText}
@@ -479,19 +640,19 @@ export default function App() {
 
             {winBanner.visible && (
               <div
-                className={`px-5 py-2 rounded-xl border shadow-xl text-center transition-transform duration-150 ${
+                className={`px-5 py-1.5 rounded-xl border shadow-xl text-center transition-transform duration-150 ${
                   winBanner.isBig
-                    ? 'bg-[#241806]/92 border-amber-400/70'
-                    : 'bg-[#0b101b]/90 border-amber-400/35'
+                    ? 'bg-[#241806]/94 border-amber-400/75'
+                    : 'bg-[#0b101b]/94 border-amber-400/40'
                 }`}
               >
                 <div className="text-[11px] uppercase tracking-[0.18em] text-amber-300 font-semibold">
                   {winBanner.label}
-                  {winBanner.multiplier > 1
-                    ? ` · ${winBanner.multiplier}× Multiplier`
+                  {winBanner.extraMultiplier > 1
+                    ? ` · ${winBanner.extraMultiplier}× Foil`
                     : ''}
                 </div>
-                <div className="font-mono-num text-xl sm:text-2xl font-bold text-white leading-tight mt-0.5">
+                <div className="font-mono-num text-lg sm:text-2xl font-bold text-white leading-tight mt-0.5">
                   +${winBanner.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               </div>
@@ -500,7 +661,6 @@ export default function App() {
 
           {/* Bottom Ergonomic Control Dock + Card Inspect Strip */}
           <div className="flex flex-col items-center pb-safe px-3 sm:px-5 pb-2.5">
-            {/* Inspected 3D Card Info Strip (when tapping a card in idle) */}
             {inspectedCard && !isSpinning && (
               <div className="mb-2 px-4 py-2 rounded-xl bg-[#0b101b]/92 border border-amber-400/30 text-center max-w-sm shadow-lg">
                 <div className="text-xs font-semibold text-amber-300">
@@ -514,7 +674,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Collapse / Expand Toggle */}
             <button
               type="button"
               onClick={() => {
@@ -537,7 +696,6 @@ export default function App() {
               )}
             </button>
 
-            {/* Unified Bottom Dock */}
             {!dockCollapsed && (
               <div className="pointer-events-auto w-full max-w-[780px] px-3 sm:px-4 py-2.5 rounded-2xl bg-[#0b101b]/92 border border-amber-400/22 shadow-2xl flex items-center justify-between gap-2 sm:gap-4">
                 {/* Bet Selector */}
@@ -552,7 +710,7 @@ export default function App() {
                     <Minus className="w-4 h-4" />
                   </button>
 
-                  <div className="min-w-[66px] sm:min-w-[76px] text-center">
+                  <div className="min-w-[60px] sm:min-w-[74px] text-center">
                     <div className="text-[10px] uppercase tracking-wider text-stone-400 leading-none">
                       Bet
                     </div>

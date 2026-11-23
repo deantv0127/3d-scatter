@@ -78,7 +78,6 @@ function drawSuitGlyph(
     ctx.closePath();
     ctx.fill();
   } else if (symbol === 'BONUS') {
-    // 8-point arcana star crest
     ctx.beginPath();
     for (let i = 0; i < 16; i += 1) {
       const ang = (i * Math.PI) / 8;
@@ -91,7 +90,6 @@ function drawSuitGlyph(
     ctx.closePath();
     ctx.fill();
   } else if (symbol === 'WILD') {
-    // Stylized 5-point royal star
     ctx.beginPath();
     for (let i = 0; i < 10; i += 1) {
       const ang = (i * Math.PI) / 5 - Math.PI / 2;
@@ -149,7 +147,7 @@ function getCardStyle(symbol: SymbolId, multiplier?: MultiplierValue): CardStyle
         bgBottom: '#08101c',
         frameColor: '#38bdf8',
         accentColor: '#7dd3fc',
-        glowColor: 'rgba(56, 189, 248, 0.25)',
+        glowColor: 'rgba(56, 189, 248, 0.32)',
         cornerText: '♦',
         label: 'DIAMOND',
       };
@@ -159,7 +157,7 @@ function getCardStyle(symbol: SymbolId, multiplier?: MultiplierValue): CardStyle
         bgBottom: '#06130f',
         frameColor: '#34d399',
         accentColor: '#6ee7b7',
-        glowColor: 'rgba(52, 211, 153, 0.24)',
+        glowColor: 'rgba(52, 211, 153, 0.30)',
         cornerText: '♣',
         label: 'CLUB',
       };
@@ -169,7 +167,7 @@ function getCardStyle(symbol: SymbolId, multiplier?: MultiplierValue): CardStyle
         bgBottom: '#16070d',
         frameColor: '#fb7185',
         accentColor: '#fda4af',
-        glowColor: 'rgba(251, 113, 133, 0.26)',
+        glowColor: 'rgba(251, 113, 133, 0.32)',
         cornerText: '♥',
         label: 'HEART',
       };
@@ -179,7 +177,7 @@ function getCardStyle(symbol: SymbolId, multiplier?: MultiplierValue): CardStyle
         bgBottom: '#0a0d13',
         frameColor: '#94a3b8',
         accentColor: '#e2e8f0',
-        glowColor: 'rgba(148, 163, 184, 0.24)',
+        glowColor: 'rgba(148, 163, 184, 0.28)',
         cornerText: '♠',
         label: 'SPADE',
       };
@@ -189,7 +187,7 @@ function getCardStyle(symbol: SymbolId, multiplier?: MultiplierValue): CardStyle
         bgBottom: '#12081c',
         frameColor: '#c084fc',
         accentColor: '#e9d5ff',
-        glowColor: 'rgba(192, 132, 252, 0.28)',
+        glowColor: 'rgba(192, 132, 252, 0.34)',
         cornerText: 'Q',
         label: 'QUEEN',
       };
@@ -199,7 +197,7 @@ function getCardStyle(symbol: SymbolId, multiplier?: MultiplierValue): CardStyle
         bgBottom: '#140c04',
         frameColor: '#fbbf24',
         accentColor: '#fde68a',
-        glowColor: 'rgba(251, 191, 36, 0.28)',
+        glowColor: 'rgba(251, 191, 36, 0.34)',
         cornerText: 'K',
         label: 'KING',
       };
@@ -209,7 +207,7 @@ function getCardStyle(symbol: SymbolId, multiplier?: MultiplierValue): CardStyle
         bgBottom: '#130e06',
         frameColor: '#f59e0b',
         accentColor: '#fef3c7',
-        glowColor: 'rgba(245, 158, 11, 0.34)',
+        glowColor: 'rgba(245, 158, 11, 0.40)',
         cornerText: 'A',
         label: 'ACE',
       };
@@ -219,7 +217,7 @@ function getCardStyle(symbol: SymbolId, multiplier?: MultiplierValue): CardStyle
         bgBottom: '#061515',
         frameColor: '#2dd4bf',
         accentColor: '#99f6e4',
-        glowColor: 'rgba(45, 212, 191, 0.36)',
+        glowColor: 'rgba(45, 212, 191, 0.42)',
         cornerText: '★',
         label: 'WILD',
       };
@@ -229,7 +227,7 @@ function getCardStyle(symbol: SymbolId, multiplier?: MultiplierValue): CardStyle
         bgBottom: '#170615',
         frameColor: '#f472b6',
         accentColor: '#fbcfe8',
-        glowColor: 'rgba(244, 114, 182, 0.36)',
+        glowColor: 'rgba(244, 114, 182, 0.42)',
         cornerText: '✦',
         label: 'BONUS',
       };
@@ -239,21 +237,50 @@ function getCardStyle(symbol: SymbolId, multiplier?: MultiplierValue): CardStyle
         bgBottom: '#170f03',
         frameColor: '#facc15',
         accentColor: '#fef08a',
-        glowColor: 'rgba(250, 204, 21, 0.42)',
+        glowColor: 'rgba(250, 204, 21, 0.48)',
         cornerText: `${multiplier ?? 2}×`,
         label: 'MULTIPLIER',
       };
   }
 }
 
+const ALL_SYMBOLS: Array<{ symbol: SymbolId; multiplier?: MultiplierValue }> = [
+  { symbol: 'DIAMOND' },
+  { symbol: 'CLUB' },
+  { symbol: 'HEART' },
+  { symbol: 'SPADE' },
+  { symbol: 'QUEEN' },
+  { symbol: 'KING' },
+  { symbol: 'ACE' },
+  { symbol: 'WILD' },
+  { symbol: 'BONUS' },
+  { symbol: 'MULTIPLIER', multiplier: 2 },
+  { symbol: 'MULTIPLIER', multiplier: 3 },
+  { symbol: 'MULTIPLIER', multiplier: 5 },
+  { symbol: 'MULTIPLIER', multiplier: 10 },
+  { symbol: 'MULTIPLIER', multiplier: 25 },
+];
+
 export class CardTextureAtlas {
   private faceTextures = new Map<string, THREE.CanvasTexture>();
   private backTexture: THREE.CanvasTexture | null = null;
   private feltTexture: THREE.CanvasTexture | null = null;
   private maxAnisotropy: number;
+  private cardScale: number;
 
-  constructor(maxAnisotropy: number) {
-    this.maxAnisotropy = Math.min(maxAnisotropy, 8);
+  constructor(maxAnisotropy: number, isMobile: boolean) {
+    this.maxAnisotropy = Math.min(maxAnisotropy, isMobile ? 4 : 8);
+    // Mobile-friendly resolution: 320x448 on mobile, 384x538 on desktop (base design space 512x716)
+    this.cardScale = isMobile ? 0.625 : 0.75;
+  }
+
+  public preloadAll(renderer: THREE.WebGLRenderer): void {
+    renderer.initTexture(this.getBackTexture());
+    renderer.initTexture(this.getFeltTexture());
+    for (const item of ALL_SYMBOLS) {
+      const tex = this.getFaceTexture(item.symbol, item.multiplier);
+      renderer.initTexture(tex);
+    }
   }
 
   public getFaceTexture(
@@ -272,54 +299,53 @@ export class CardTextureAtlas {
 
   public getBackTexture(): THREE.CanvasTexture {
     if (this.backTexture) return this.backTexture;
-    const w = 512;
-    const h = 716;
+    const baseW = 512;
+    const baseH = 716;
+    const w = Math.round(baseW * this.cardScale);
+    const h = Math.round(baseH * this.cardScale);
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d')!;
+    ctx.scale(this.cardScale, this.cardScale);
 
-    // Deep midnight obsidian gradient
-    const bg = ctx.createLinearGradient(0, 0, w, h);
+    const bg = ctx.createLinearGradient(0, 0, baseW, baseH);
     bg.addColorStop(0, '#0c1220');
     bg.addColorStop(0.5, '#131d31');
     bg.addColorStop(1, '#090d17');
     ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(0, 0, baseW, baseH);
 
-    // Ornate gold double-line border
     ctx.strokeStyle = 'rgba(212, 175, 55, 0.72)';
     ctx.lineWidth = 6;
-    drawRoundedRectPath(ctx, 26, 26, w - 52, h - 52, 26);
+    drawRoundedRectPath(ctx, 26, 26, baseW - 52, baseH - 52, 26);
     ctx.stroke();
 
     ctx.strokeStyle = 'rgba(212, 175, 55, 0.35)';
     ctx.lineWidth = 2;
-    drawRoundedRectPath(ctx, 42, 42, w - 84, h - 84, 18);
+    drawRoundedRectPath(ctx, 42, 42, baseW - 84, baseH - 84, 18);
     ctx.stroke();
 
-    // Guilloché diamond lattice
     ctx.save();
-    drawRoundedRectPath(ctx, 48, 48, w - 96, h - 96, 14);
+    drawRoundedRectPath(ctx, 48, 48, baseW - 96, baseH - 96, 14);
     ctx.clip();
     ctx.strokeStyle = 'rgba(212, 175, 55, 0.16)';
     ctx.lineWidth = 2;
-    const step = 44;
-    for (let x = -h; x < w + h; x += step) {
+    const step = 48;
+    for (let x = -baseH; x < baseW + baseH; x += step) {
       ctx.beginPath();
       ctx.moveTo(x, 0);
-      ctx.lineTo(x + h, h);
+      ctx.lineTo(x + baseH, baseH);
       ctx.stroke();
       ctx.beginPath();
-      ctx.moveTo(x + h, 0);
-      ctx.lineTo(x, h);
+      ctx.moveTo(x + baseH, 0);
+      ctx.lineTo(x, baseH);
       ctx.stroke();
     }
     ctx.restore();
 
-    // Center arcana medallion
     ctx.save();
-    ctx.translate(w / 2, h / 2);
+    ctx.translate(baseW / 2, baseH / 2);
     const radGrad = ctx.createRadialGradient(0, 0, 12, 0, 0, 120);
     radGrad.addColorStop(0, 'rgba(245, 189, 65, 0.36)');
     radGrad.addColorStop(1, 'rgba(245, 189, 65, 0)');
@@ -347,7 +373,7 @@ export class CardTextureAtlas {
 
   public getFeltTexture(): THREE.CanvasTexture {
     if (this.feltTexture) return this.feltTexture;
-    const size = 512;
+    const size = 384;
     const canvas = document.createElement('canvas');
     canvas.width = size;
     canvas.height = size;
@@ -356,7 +382,7 @@ export class CardTextureAtlas {
     const grad = ctx.createRadialGradient(
       size / 2,
       size / 2,
-      20,
+      16,
       size / 2,
       size / 2,
       size / 2,
@@ -367,22 +393,20 @@ export class CardTextureAtlas {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
 
-    // Subtle woven felt micro-grain
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.018)';
-    for (let i = 0; i < 3500; i += 1) {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
+    for (let i = 0; i < 650; i += 1) {
       const px = Math.random() * size;
       const py = Math.random() * size;
       ctx.fillRect(px, py, 1.5, 1.5);
     }
 
-    // Subtle inlaid gold compass rings
-    ctx.strokeStyle = 'rgba(212, 175, 55, 0.14)';
+    ctx.strokeStyle = 'rgba(212, 175, 55, 0.16)';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(size / 2, size / 2, size * 0.44, 0, Math.PI * 2);
     ctx.stroke();
 
-    ctx.strokeStyle = 'rgba(212, 175, 55, 0.08)';
+    ctx.strokeStyle = 'rgba(212, 175, 55, 0.09)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.arc(size / 2, size / 2, size * 0.34, 0, Math.PI * 2);
@@ -399,41 +423,48 @@ export class CardTextureAtlas {
     symbol: SymbolId,
     multiplier?: MultiplierValue,
   ): THREE.CanvasTexture {
-    const w = 512;
-    const h = 716;
+    const baseW = 512;
+    const baseH = 716;
+    const w = Math.round(baseW * this.cardScale);
+    const h = Math.round(baseH * this.cardScale);
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d')!;
+    ctx.scale(this.cardScale, this.cardScale);
+
     const style = getCardStyle(symbol, multiplier);
 
-    // Rich card background
-    const bg = ctx.createLinearGradient(0, 0, 0, h);
+    const bg = ctx.createLinearGradient(0, 0, 0, baseH);
     bg.addColorStop(0, style.bgTop);
     bg.addColorStop(1, style.bgBottom);
     ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(0, 0, baseW, baseH);
 
-    // Center aura radial glow
-    const aura = ctx.createRadialGradient(w / 2, h / 2, 16, w / 2, h / 2, 230);
+    // Fast radial glow (avoids expensive mobile shadowBlur passes)
+    const aura = ctx.createRadialGradient(
+      baseW / 2,
+      baseH / 2 - 10,
+      18,
+      baseW / 2,
+      baseH / 2 - 10,
+      235,
+    );
     aura.addColorStop(0, style.glowColor);
     aura.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = aura;
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(0, 0, baseW, baseH);
 
-    // Crisp outer foil frame
     ctx.strokeStyle = style.frameColor;
     ctx.lineWidth = 8;
-    drawRoundedRectPath(ctx, 22, 22, w - 44, h - 44, 28);
+    drawRoundedRectPath(ctx, 22, 22, baseW - 44, baseH - 44, 28);
     ctx.stroke();
 
-    // Inner hairline filigree frame
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
     ctx.lineWidth = 2;
-    drawRoundedRectPath(ctx, 38, 38, w - 76, h - 76, 18);
+    drawRoundedRectPath(ctx, 38, 38, baseW - 76, baseH - 76, 18);
     ctx.stroke();
 
-    // Corner indices (top-left & bottom-right)
     ctx.fillStyle = style.accentColor;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -444,17 +475,12 @@ export class CardTextureAtlas {
     ctx.fillText(style.cornerText, 82, 92);
 
     ctx.save();
-    ctx.translate(w - 82, h - 92);
+    ctx.translate(baseW - 82, baseH - 92);
     ctx.rotate(Math.PI);
     ctx.fillText(style.cornerText, 0, 0);
     ctx.restore();
 
-    // Central emblem
-    ctx.save();
-    ctx.shadowColor = style.frameColor;
-    ctx.shadowBlur = 24;
     ctx.fillStyle = style.frameColor;
-
     if (
       symbol === 'DIAMOND' ||
       symbol === 'CLUB' ||
@@ -463,40 +489,35 @@ export class CardTextureAtlas {
       symbol === 'WILD' ||
       symbol === 'BONUS'
     ) {
-      drawSuitGlyph(ctx, symbol, w / 2, h / 2 - 14, 138);
-      // Inner highlight sheen
-      ctx.shadowBlur = 0;
+      drawSuitGlyph(ctx, symbol, baseW / 2, baseH / 2 - 14, 138);
       ctx.fillStyle = style.accentColor;
-      drawSuitGlyph(ctx, symbol, w / 2, h / 2 - 14, 96);
+      drawSuitGlyph(ctx, symbol, baseW / 2, baseH / 2 - 14, 96);
     } else if (symbol === 'QUEEN' || symbol === 'KING' || symbol === 'ACE') {
-      // Royal medallion ring
       ctx.strokeStyle = style.frameColor;
       ctx.lineWidth = 7;
       ctx.beginPath();
-      ctx.arc(w / 2, h / 2 - 12, 136, 0, Math.PI * 2);
+      ctx.arc(baseW / 2, baseH / 2 - 12, 136, 0, Math.PI * 2);
       ctx.stroke();
 
-      ctx.shadowBlur = 0;
-      drawCrownCrest(ctx, w / 2, h / 2 - 102, 42);
+      drawCrownCrest(ctx, baseW / 2, baseH / 2 - 102, 42);
 
       ctx.fillStyle = style.accentColor;
       ctx.font = '800 176px "Cinzel", Georgia, serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(style.cornerText, w / 2, h / 2 + 18);
+      ctx.fillText(style.cornerText, baseW / 2, baseH / 2 + 18);
     } else if (symbol === 'MULTIPLIER') {
-      // Holographic golden multiplier seal
       ctx.strokeStyle = '#fde047';
       ctx.lineWidth = 10;
       ctx.beginPath();
-      ctx.arc(w / 2, h / 2 - 14, 148, 0, Math.PI * 2);
+      ctx.arc(baseW / 2, baseH / 2 - 14, 148, 0, Math.PI * 2);
       ctx.stroke();
 
       ctx.strokeStyle = 'rgba(254, 240, 138, 0.45)';
       ctx.lineWidth = 3;
       ctx.setLineDash([12, 8]);
       ctx.beginPath();
-      ctx.arc(w / 2, h / 2 - 14, 126, 0, Math.PI * 2);
+      ctx.arc(baseW / 2, baseH / 2 - 14, 126, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
 
@@ -504,15 +525,13 @@ export class CardTextureAtlas {
       ctx.font = '800 132px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(`${multiplier ?? 2}×`, w / 2, h / 2 - 10);
+      ctx.fillText(`${multiplier ?? 2}×`, baseW / 2, baseH / 2 - 10);
     }
-    ctx.restore();
 
-    // Crisp bottom plaque label
     ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
     ctx.font = '700 24px "Plus Jakarta Sans", sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(style.label, w / 2, h - 66);
+    ctx.fillText(style.label, baseW / 2, baseH - 66);
 
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
