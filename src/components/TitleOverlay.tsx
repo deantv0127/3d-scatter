@@ -1,14 +1,18 @@
 import React from 'react';
 import { User } from 'firebase/auth';
-import { LogIn, LogOut, UserCheck, UserPlus } from 'lucide-react';
+import { LogIn, LogOut, ShieldCheck, UserCheck, UserPlus, Wallet } from 'lucide-react';
 import { PlayerVaultProfile } from '../game/playerVault';
+import { coinsToPesos, formatPeso } from '../game/withdrawals';
 
 interface TitleOverlayProps {
   onStart: () => void;
   user: User | null;
   profile: PlayerVaultProfile | null;
   authLoading: boolean;
+  isAdmin: boolean;
   onOpenAuth: (mode: 'login' | 'signup') => void;
+  onOpenWithdraw: () => void;
+  onOpenAdmin: () => void;
   onLogout: () => void;
 }
 
@@ -17,7 +21,10 @@ export const TitleOverlay: React.FC<TitleOverlayProps> = ({
   user,
   profile,
   authLoading,
+  isAdmin,
   onOpenAuth,
+  onOpenWithdraw,
+  onOpenAdmin,
   onLogout,
 }) => {
   const displayName =
@@ -105,6 +112,30 @@ export const TitleOverlay: React.FC<TitleOverlayProps> = ({
         >
           {user ? 'Enter Vault Table' : 'Deal Cards'}
         </button>
+
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-2 w-full">
+          <button
+            type="button"
+            onClick={onOpenWithdraw}
+            className="min-h-[42px] px-4 py-2 rounded-xl bg-emerald-500/12 hover:bg-emerald-500/20 border border-emerald-400/35 text-xs sm:text-sm font-semibold text-emerald-200 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <Wallet className="w-4 h-4 text-emerald-300" />
+            <span>
+              Withdraw{profile ? ` (${formatPeso(coinsToPesos(profile.balance))})` : ''}
+            </span>
+          </button>
+
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={onOpenAdmin}
+              className="min-h-[42px] px-4 py-2 rounded-xl bg-amber-500/12 hover:bg-amber-500/20 border border-amber-400/40 text-xs sm:text-sm font-semibold text-amber-200 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <ShieldCheck className="w-4 h-4 text-amber-300" />
+              <span>Admin Payouts</span>
+            </button>
+          )}
+        </div>
 
         {/* Auth Actions: Login / Sign Up or Signed-In Account + Log Out */}
         <div className="mt-4 w-full pt-4 border-t border-white/10">

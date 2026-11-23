@@ -8,7 +8,7 @@ service cloud.firestore {
     }
 
     function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function incoming() {
@@ -25,6 +25,21 @@ service cloud.firestore {
 
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isEmailAdmin() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == 'deantv0127@gmail.com';
+    }
+
+    function isAdmin() {
+      return isEmailAdmin()
+        || (
+          isSignedIn()
+          && request.auth.token.email_verified == true
+          && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        );
     }
 
     function isValidPlayerProfile(data, userId) {
@@ -58,7 +73,6 @@ service cloud.firestore {
         'updatedAt'
       ])
       && isValidId(data.uid)
-      && data.uid == request.auth.uid
       && data.uid == userId
       && data.displayName is string
       && data.displayName.size() >= 1
@@ -88,59 +102,216 @@ service cloud.firestore {
       && data.updatedAt is timestamp;
     }
 
+    function isValidPayoutTier(coinsAmount, pesoAmount) {
+      return (coinsAmount == 2000 && pesoAmount == 5)
+        || (coinsAmount == 4000 && pesoAmount == 10)
+        || (coinsAmount == 8000 && pesoAmount == 20)
+        || (coinsAmount == 20000 && pesoAmount == 50)
+        || (coinsAmount == 40000 && pesoAmount == 100);
+    }
+
+    function isValidWithdrawalRequest(data, withdrawalId) {
+      return data.keys().hasAll([
+        'id',
+        'uid',
+        'playerName',
+        'gcashName',
+        'gcashNumber',
+        'coinsAmount',
+        'pesoAmount',
+        'status',
+        'createdAt',
+        'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'id',
+        'uid',
+        'playerName',
+        'playerEmail',
+        'gcashName',
+        'gcashNumber',
+        'coinsAmount',
+        'pesoAmount',
+        'status',
+        'adminNote',
+        'processedBy',
+        'createdAt',
+        'updatedAt'
+      ])
+      && isValidId(data.id)
+      && data.id == withdrawalId
+      && isValidId(data.uid)
+      && data.playerName is string
+      && data.playerName.size() >= 1
+      && data.playerName.size() <= 64
+      && (!('playerEmail' in data) || (data.playerEmail is string && data.playerEmail.size() <= 128))
+      && data.gcashName is string
+      && data.gcashName.size() >= 2
+      && data.gcashName.size() <= 80
+      && data.gcashNumber is string
+      && data.gcashNumber.size() >= 10
+      && data.gcashNumber.size() <= 16
+      && data.gcashNumber.matches('^(09|\\+?639)[0-9]{9}$')
+      && data.coinsAmount is int
+      && data.pesoAmount is int
+      && isValidPayoutTier(data.coinsAmount, data.pesoAmount)
+      && data.status in ['pending', 'approved', 'paid', 'rejected']
+      && (!('adminNote' in data) || (data.adminNote is string && data.adminNote.size() <= 200))
+      && (!('processedBy' in data) || isValidId(data.processedBy))
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminRecord(data, adminId) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'email', 'createdAt'])
+        && isValidId(data.uid)
+        && data.uid == adminId
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 128
+        && data.createdAt is timestamp;
+    }
+
     match /players/{userId} {
-      allow get: if isValidId(userId) && isOwner(userId);
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
       allow list: if false;
 
       allow create: if isValidId(userId)
         && isOwner(userId)
         && isValidPlayerProfile(incoming(), userId)
+        && incoming().uid == request.auth.uid
         && (!('lastDailyBonusAt' in incoming()) || incoming().lastDailyBonusAt == request.time)
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
 
       allow update: if isValidId(userId)
-        && isOwner(userId)
         && isValidPlayerProfile(incoming(), userId)
         && incoming().uid == existing().uid
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Action 1: Sync game state (bankroll, free spins, stats)
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'balance',
-            'freeSpinsLeft',
-            'freeSpinPot',
-            'freeSpinsPlayed',
-            'totalSpins',
-            'totalWon',
-            'biggestWin',
-            'updatedAt'
-          ])
-          ||
-          // Action 2: Sync profile metadata
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'displayName',
-            'photoUrl',
-            'updatedAt'
-          ])
-          ||
-          // Action 3: Claim 24-hour Daily Login Bonus (server-enforced cooldown & reward cap)
           (
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'balance',
-              'lastDailyBonusAt',
-              'dailyBonusStreak',
-              'updatedAt'
-            ])
-            && incoming().lastDailyBonusAt == request.time
-            && (!('lastDailyBonusAt' in existing()) || request.time >= existing().lastDailyBonusAt + duration.value(24, 'h'))
+            isOwner(userId)
+            && (
+              // Action 1: Sync game state (bankroll, free spins, stats, or withdrawal deduction)
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'balance',
+                'freeSpinsLeft',
+                'freeSpinPot',
+                'freeSpinsPlayed',
+                'totalSpins',
+                'totalWon',
+                'biggestWin',
+                'updatedAt'
+              ])
+              ||
+              // Action 2: Sync profile metadata
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'displayName',
+                'photoUrl',
+                'updatedAt'
+              ])
+              ||
+              // Action 3: Claim 24-hour Daily Login Bonus (server-enforced cooldown & reward cap)
+              (
+                incoming().diff(existing()).affectedKeys().hasOnly([
+                  'balance',
+                  'lastDailyBonusAt',
+                  'dailyBonusStreak',
+                  'updatedAt'
+                ])
+                && incoming().lastDailyBonusAt == request.time
+                && (!('lastDailyBonusAt' in existing()) || request.time >= existing().lastDailyBonusAt + duration.value(24, 'h'))
+                && incoming().balance >= existing().balance
+                && incoming().balance <= existing().balance + 50
+              )
+            )
+          )
+          ||
+          // Action 4: Verified admin refunding balance when rejecting a withdrawal
+          (
+            isAdmin()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'updatedAt'])
             && incoming().balance >= existing().balance
-            && incoming().balance <= existing().balance + 50
+            && incoming().balance <= existing().balance + 40000
           )
         );
 
       allow delete: if false;
+    }
+
+    match /withdrawals/{withdrawalId} {
+      allow get: if isValidId(withdrawalId)
+        && isSignedIn()
+        && (existing().uid == request.auth.uid || isAdmin());
+
+      // Zero get()/exists() inside allow list (Cost-Optimization & Query Enforcer)
+      allow list: if isSignedIn()
+        && (resource.data.uid == request.auth.uid || isEmailAdmin());
+
+      allow create: if isValidId(withdrawalId)
+        && isSignedIn()
+        && isValidWithdrawalRequest(incoming(), withdrawalId)
+        && incoming().uid == request.auth.uid
+        && incoming().status == 'pending'
+        && !('adminNote' in incoming())
+        && !('processedBy' in incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/players/$(request.auth.uid))
+        && get(/databases/$(database)/documents/players/$(request.auth.uid)).data.balance >= incoming().coinsAmount
+        && getAfter(/databases/$(database)/documents/players/$(request.auth.uid)).data.balance >= get(/databases/$(database)/documents/players/$(request.auth.uid)).data.balance - incoming().coinsAmount - 0.01
+        && getAfter(/databases/$(database)/documents/players/$(request.auth.uid)).data.balance <= get(/databases/$(database)/documents/players/$(request.auth.uid)).data.balance - incoming().coinsAmount + 0.01;
+
+      allow update: if isValidId(withdrawalId)
+        && isAdmin()
+        && isValidWithdrawalRequest(incoming(), withdrawalId)
+        && incoming().id == existing().id
+        && incoming().uid == existing().uid
+        && incoming().playerName == existing().playerName
+        && incoming().gcashName == existing().gcashName
+        && incoming().gcashNumber == existing().gcashNumber
+        && incoming().coinsAmount == existing().coinsAmount
+        && incoming().pesoAmount == existing().pesoAmount
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().processedBy == request.auth.uid
+        && existing().status in ['pending', 'approved']
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status',
+          'adminNote',
+          'processedBy',
+          'updatedAt'
+        ])
+        && (
+          (existing().status == 'pending' && incoming().status in ['approved', 'paid'])
+          ||
+          (existing().status == 'approved' && incoming().status == 'paid')
+          ||
+          (
+            incoming().status == 'rejected'
+            && (
+              !exists(/databases/$(database)/documents/players/$(existing().uid))
+              || (
+                getAfter(/databases/$(database)/documents/players/$(existing().uid)).data.balance >= get(/databases/$(database)/documents/players/$(existing().uid)).data.balance + existing().coinsAmount - 0.01
+                && getAfter(/databases/$(database)/documents/players/$(existing().uid)).data.balance <= get(/databases/$(database)/documents/players/$(existing().uid)).data.balance + existing().coinsAmount + 0.01
+              )
+            )
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && (isOwner(adminId) || isEmailAdmin());
+      allow list: if false;
+      allow create: if isValidId(adminId)
+        && isEmailAdmin()
+        && isValidAdminRecord(incoming(), adminId)
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
     }
   }
 }

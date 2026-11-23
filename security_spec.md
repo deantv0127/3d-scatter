@@ -1,22 +1,31 @@
 # Sovereign Arcana Security Specification
 
 ## 1. Data Invariants
-1. **Strict Ownership**: A document at `/players/{userId}` may only be read (`get`), created, or updated by an authenticated, email-verified user whose `request.auth.uid == userId`.
-2. **No Directory Enumeration**: Listing `/players` (`allow list`) and deleting player vaults (`allow delete`) are strictly forbidden.
-3. **Immutable Identity & Creation Time**: `uid` and `createdAt` cannot be modified after document creation, and `createdAt`/`updatedAt` must equal `request.time`.
-4. **No Shadow Fields**: Creates must provide all required keys and only allowlisted keys (`hasAll` + `hasOnly`); updates must use action-scoped `affectedKeys().hasOnly(...)`.
-5. **Bounded Numeric & String Values**: String lengths (`uid <= 128`, `displayName` 1..64, `photoUrl <= 512`) and non-negative numeric limits (`balance`, `freeSpinPot`, `freeSpinsLeft`, `totalSpins`, `totalWon`, `biggestWin`) are enforced on every write.
+1. **Strict Ownership & Admin RBAC**:
+   - `/players/{userId}` may only be read (`get`), created, or updated by the owning user (`request.auth.uid == userId`), with verified admin override for withdrawal coin refunds.
+   - `/withdrawals/{withdrawalId}` may only be read (`get`/`list`) by the owning player (`resource.data.uid == request.auth.uid`) or a verified admin (`email_verified == true` and matching admin email/registry), isolating GCash PII from other users.
+2. **No Unauthorized Directory Enumeration**:
+   - Listing `/players` and `/admins` is strictly forbidden.
+   - Listing `/withdrawals` evaluates `resource.data.uid == request.auth.uid` or verified bootstrapped admin email without any `get()`/`exists()` calls in `allow list`.
+3. **Atomic Balance Deduction & Refund**:
+   - Creating a `/withdrawals/{withdrawalId}` requires `status == 'pending'`, exact coin-to-peso tier matching (`2000->5`, `4000->10`, `8000->20`, `20000->50`, `40000->100`), sufficient `/players/{uid}.balance`, and atomic deduction via `getAfter` in the same transaction/batch.
+   - Rejecting a withdrawal as an admin atomically refunds `coinsAmount` to `/players/{uid}.balance` via `getAfter`.
+4. **Terminal State Locking**:
+   - Withdrawals in `'paid'` or `'rejected'` status cannot be modified again, preventing double-refunds or tampering.
+5. **Immutable Identity, Timestamps & Schema Limits**:
+   - `uid`, `id`, `gcashName`, `gcashNumber`, `coinsAmount`, `pesoAmount`, and `createdAt` are immutable after creation; `createdAt`/`updatedAt` must equal `request.time`.
+   - All strings enforce `.size()` bounds and regex validation (`id`, `uid`, `gcashNumber`).
 
 ## 2. Adversarial Payloads ("Dirty Dozen")
-1. Unauthenticated `get` on `/players/user_123` -> `PERMISSION_DENIED`.
-2. Cross-user `get` on `/players/victim_uid` as `attacker_uid` -> `PERMISSION_DENIED`.
-3. `list` query on `/players` -> `PERMISSION_DENIED`.
-4. Unverified email token creating `/players/user_123` -> `PERMISSION_DENIED`.
-5. Oversized path ID (`/players/<200-char-id>`) -> `PERMISSION_DENIED`.
-6. Create with spoofed `uid` (`uid: "other_user"`) -> `PERMISSION_DENIED`.
-7. Create with shadow field (`isAdmin: true` or `role: "admin"`) -> `PERMISSION_DENIED`.
-8. Create with client-supplied `createdAt` instead of `request.time` -> `PERMISSION_DENIED`.
-9. Update attempting to mutate `uid` or `createdAt` -> `PERMISSION_DENIED`.
-10. Update injecting negative `balance: -500` or string `balance: "9999"` -> `PERMISSION_DENIED`.
-11. Update injecting 1KB `displayName` -> `PERMISSION_DENIED`.
-12. `delete` on `/players/user_123` -> `PERMISSION_DENIED`.
+1. Unauthenticated `get` or `list` on `/players/user_123` or `/withdrawals` -> `PERMISSION_DENIED`.
+2. Cross-user `get` on `/withdrawals/wd_victim` as `attacker_uid` (PII leak of GCash number) -> `PERMISSION_DENIED`.
+3. Unverified email spoofing `email: "deantv0127@gmail.com"` with `email_verified: false` -> `PERMISSION_DENIED`.
+4. Oversized path ID (`/withdrawals/<200-char-id>`) -> `PERMISSION_DENIED`.
+5. Creating a withdrawal with `status: "paid"` or `status: "approved"` directly -> `PERMISSION_DENIED`.
+6. Creating a withdrawal with mismatched tier (`coinsAmount: 2000, pesoAmount: 100`) -> `PERMISSION_DENIED`.
+7. Creating a withdrawal without atomically deducting `coinsAmount` from `/players/{uid}.balance` -> `PERMISSION_DENIED`.
+8. Creating a withdrawal with shadow field (`isAdmin: true`) or invalid `gcashNumber: "abc"` -> `PERMISSION_DENIED`.
+9. Non-admin player attempting to `update` `/withdrawals/wd_123` to `'approved'` or `'paid'` -> `PERMISSION_DENIED`.
+10. Admin attempting to mutate a terminal `'rejected'` or `'paid'` withdrawal (double refund) -> `PERMISSION_DENIED`.
+11. Non-admin attempting to write to `/admins/{uid}` (self-assigned admin role) -> `PERMISSION_DENIED`.
+12. `delete` on `/players/user_123` or `/withdrawals/wd_123` -> `PERMISSION_DENIED`.

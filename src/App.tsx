@@ -16,17 +16,21 @@ import {
   Repeat,
   RotateCw,
   Settings,
+  ShieldCheck,
   UserCheck,
   Volume2,
   VolumeX,
+  Wallet,
   Zap,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+import { AdminPage } from './components/AdminPage';
 import { AuthModal } from './components/AuthModal';
 import { DailyBonusModal } from './components/DailyBonusModal';
 import { FreeSpinSummaryModal } from './components/FreeSpinSummaryModal';
 import { PaytableModal } from './components/PaytableModal';
 import { TitleOverlay } from './components/TitleOverlay';
+import { WithdrawalPage } from './components/WithdrawalPage';
 import { auth } from './firebase';
 import { soundEngine } from './game/audio';
 import { CardSlotStage } from './game/CardSlotStage';
@@ -41,6 +45,7 @@ import {
   updatePlayerDisplayName,
 } from './game/playerVault';
 import { resolveSpinOutcome } from './game/slotEngine';
+import { coinsToPesos, formatPeso, isUserAdmin } from './game/withdrawals';
 import {
   BET_STEPS,
   CardCellData,
@@ -86,6 +91,7 @@ export default function App() {
   const [dockCollapsed, setDockCollapsed] = useState<boolean>(false);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [showPaytable, setShowPaytable] = useState<boolean>(false);
+  const [activePage, setActivePage] = useState<'game' | 'withdraw' | 'admin'>('game');
   const [contextLost, setContextLost] = useState<boolean>(false);
 
   // Firebase Auth & Cloud Player Vault
@@ -102,6 +108,7 @@ export default function App() {
   } | null>(null);
   const [menuNowMs, setMenuNowMs] = useState<number>(() => Date.now());
   const [fatalError, setFatalError] = useState<Error | null>(null);
+  const isAdmin = isUserAdmin(user);
 
   // Grid Window Cascade Multiplier Progression (2x, 3x, 4x, 6x, 10x)
   const [activeCascadeIndex, setActiveCascadeIndex] = useState<number>(-1);
@@ -128,6 +135,7 @@ export default function App() {
 
   const stateRef = useRef({
     phase,
+    activePage,
     balance,
     betIndex,
     isSpinning,
@@ -141,6 +149,7 @@ export default function App() {
   });
   stateRef.current = {
     phase,
+    activePage,
     balance,
     betIndex,
     isSpinning,
@@ -447,6 +456,7 @@ export default function App() {
     if (
       s.isSpinning ||
       s.phase !== 'playing' ||
+      s.activePage !== 'game' ||
       s.showPaytable ||
       s.freeSpinSummary !== null ||
       s.authModalOpen ||
@@ -617,6 +627,7 @@ export default function App() {
     if (
       isSpinning ||
       phase !== 'playing' ||
+      activePage !== 'game' ||
       showPaytable ||
       freeSpinSummary !== null ||
       authModal.open ||
@@ -639,6 +650,7 @@ export default function App() {
   }, [
     isSpinning,
     phase,
+    activePage,
     showPaytable,
     freeSpinSummary,
     authModal.open,
@@ -654,7 +666,12 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const s = stateRef.current;
-      if (s.freeSpinSummary !== null || s.authModalOpen || s.dailyBonusOpen) {
+      if (
+        s.activePage !== 'game' ||
+        s.freeSpinSummary !== null ||
+        s.authModalOpen ||
+        s.dailyBonusOpen
+      ) {
         return;
       }
       if (e.code === 'Space' || e.code === 'Enter') {
@@ -769,6 +786,7 @@ export default function App() {
     soundEngine.playClick();
     setAutoPlay(false);
     setSettingsOpen(false);
+    setActivePage('game');
     setDailyBonusAward(null);
     setAuthModal((prev) => ({ ...prev, open: false }));
     try {
@@ -854,15 +872,24 @@ export default function App() {
       )}
 
       {/* Title Screen */}
-      {phase === 'title' && (
+      {phase === 'title' && activePage === 'game' && (
         <TitleOverlay
           onStart={handleStartGame}
           user={user}
           profile={playerProfile}
           authLoading={authLoading}
+          isAdmin={isAdmin}
           onOpenAuth={(mode) => {
             soundEngine.playClick();
             setAuthModal({ open: true, mode });
+          }}
+          onOpenWithdraw={() => {
+            soundEngine.playClick();
+            setActivePage('withdraw');
+          }}
+          onOpenAdmin={() => {
+            soundEngine.playClick();
+            setActivePage('admin');
           }}
           onLogout={() => void handleLogout()}
         />
@@ -1040,6 +1067,50 @@ export default function App() {
                         </span>
                       )}
                     </button>
+
+                    {/* Withdraw / Cash Out */}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        soundEngine.playClick();
+                        setSettingsOpen(false);
+                        setAutoPlay(false);
+                        setActivePage('withdraw');
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2 rounded-xl hover:bg-white/8 flex items-center justify-between gap-2 text-left transition-colors cursor-pointer"
+                    >
+                      <span className="flex items-center gap-2.5 text-xs font-semibold text-stone-100">
+                        <Wallet className="w-4 h-4 text-emerald-300" />
+                        <span>Withdraw</span>
+                      </span>
+                      <span className="font-mono-num text-[11px] font-bold text-emerald-300">
+                        {formatPeso(coinsToPesos(balance))}
+                      </span>
+                    </button>
+
+                    {/* Admin Payouts (Bootstrapped Verified Admin) */}
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          soundEngine.playClick();
+                          setSettingsOpen(false);
+                          setAutoPlay(false);
+                          setActivePage('admin');
+                        }}
+                        className="w-full min-h-[44px] px-3 py-2 rounded-xl hover:bg-white/8 flex items-center justify-between gap-2 text-left transition-colors cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2.5 text-xs font-semibold text-amber-200">
+                          <ShieldCheck className="w-4 h-4 text-amber-300" />
+                          <span>Admin Payouts</span>
+                        </span>
+                        <span className="text-[11px] font-medium text-amber-300">
+                          Console
+                        </span>
+                      </button>
+                    )}
 
                     <div className="my-1 border-t border-white/10" />
 
@@ -1458,6 +1529,45 @@ export default function App() {
           totalWin={freeSpinSummary.totalWin}
           spinsPlayed={freeSpinSummary.spinsPlayed}
           onCollect={handleCollectFreeSpinSummary}
+        />
+      )}
+
+      {/* Withdrawal Page */}
+      {activePage === 'withdraw' && (
+        <WithdrawalPage
+          user={user}
+          profile={playerProfile}
+          balance={balance}
+          isAdmin={isAdmin}
+          onBalanceDeducted={(newBalance) => {
+            balanceRef.current = newBalance;
+            setBalance(newBalance);
+            setPlayerProfile((prev) =>
+              prev ? { ...prev, balance: newBalance } : prev,
+            );
+          }}
+          onBack={() => setActivePage('game')}
+          onOpenAuth={() => setAuthModal({ open: true, mode: 'login' })}
+          onOpenAdmin={() => setActivePage('admin')}
+        />
+      )}
+
+      {/* Admin Payout Console Page */}
+      {activePage === 'admin' && (
+        <AdminPage
+          user={user}
+          isAdmin={isAdmin}
+          onBack={() => setActivePage('game')}
+          onOpenWithdraw={() => setActivePage('withdraw')}
+          onSelfBalanceRefund={(refundedCoins) => {
+            const updated =
+              Math.round((balanceRef.current + refundedCoins) * 100) / 100;
+            balanceRef.current = updated;
+            setBalance(updated);
+            setPlayerProfile((prev) =>
+              prev ? { ...prev, balance: updated } : prev,
+            );
+          }}
         />
       )}
 

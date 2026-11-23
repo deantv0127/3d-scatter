@@ -84,6 +84,126 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "WithdrawalRequest": {
+      "title": "WithdrawalRequest",
+      "description": "Player GCash payout request submitted with coin-to-peso tier conversion for admin processing.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique withdrawal request identifier."
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the requesting player."
+        },
+        "playerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Display name of the requesting player."
+        },
+        "playerEmail": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Optional email address of the requesting player."
+        },
+        "gcashName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "description": "GCash account name of the claimant."
+        },
+        "gcashNumber": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 16,
+          "pattern": "^(09|\\+?639)[0-9]{9}$",
+          "description": "Philippine mobile number registered to GCash."
+        },
+        "coinsAmount": {
+          "type": "integer",
+          "enum": [2000, 4000, 8000, 20000, 40000],
+          "description": "Amount of coins deducted for this withdrawal tier."
+        },
+        "pesoAmount": {
+          "type": "integer",
+          "enum": [5, 10, 20, 50, 100],
+          "description": "Equivalent Philippine Peso payout amount."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "paid", "rejected"],
+          "description": "Admin processing state for the payout request."
+        },
+        "adminNote": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Optional reference or rejection note added by an admin."
+        },
+        "processedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the admin who processed the payout."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the withdrawal was requested."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the latest status update."
+        }
+      },
+      "required": [
+        "id",
+        "uid",
+        "playerName",
+        "gcashName",
+        "gcashNumber",
+        "coinsAmount",
+        "pesoAmount",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Authorized admin UID registry entry.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the admin."
+        },
+        "email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128,
+          "description": "Verified email address of the admin."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin access was recorded."
+        }
+      },
+      "required": ["uid", "email", "createdAt"]
     }
   },
   "firestore": {
@@ -92,6 +212,18 @@
         "$ref": "#/entities/PlayerProfile"
       },
       "description": "Per-user private slot vault storing bankroll, active free spin pot state, and stats."
+    },
+    "/withdrawals/{withdrawalId}": {
+      "schema": {
+        "$ref": "#/entities/WithdrawalRequest"
+      },
+      "description": "GCash withdrawal payout requests submitted by players and managed by admins."
+    },
+    "/admins/{adminId}": {
+      "schema": {
+        "$ref": "#/entities/AdminRecord"
+      },
+      "description": "Admin role registry documents."
     }
   }
 }
