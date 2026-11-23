@@ -21,7 +21,7 @@ import {
   VolumeX,
   Zap,
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import { AuthModal } from './components/AuthModal';
 import { DailyBonusModal } from './components/DailyBonusModal';
 import { FreeSpinSummaryModal } from './components/FreeSpinSummaryModal';
@@ -893,10 +893,7 @@ export default function App() {
                     }}
                     className="origin-left font-mono-num text-sm sm:text-base font-bold text-stone-100 mt-1 leading-none inline-block"
                   >
-                    {balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    <span className="text-[11px] font-semibold text-amber-300/85 ml-1">
-                      coins
-                    </span>
+                    {balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}¢
                   </motion.div>
                 </div>
 
@@ -911,10 +908,7 @@ export default function App() {
                         lastWin > 0 ? 'text-emerald-300' : 'text-stone-400'
                       }`}
                     >
-                      {displayWin.toFixed(2)}
-                      <span className="text-[10px] font-semibold ml-1 opacity-80">
-                        c
-                      </span>
+                      {displayWin.toFixed(2)}¢
                     </div>
                   </div>
                 </div>
@@ -936,10 +930,7 @@ export default function App() {
                         Bonus Pot
                       </div>
                       <div className="font-mono-num text-sm sm:text-base font-bold text-amber-300 mt-1 leading-none">
-                        {freeSpinPot.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        <span className="text-[11px] font-semibold text-amber-200/85 ml-1">
-                          coins
-                        </span>
+                        {freeSpinPot.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}¢
                       </div>
                     </div>
                   </>
@@ -1032,7 +1023,7 @@ export default function App() {
                         </span>
                       ) : dailyBonusStatus?.eligible ? (
                         <span className="font-mono-num text-[11px] font-bold text-emerald-300 shrink-0">
-                          Claim +{dailyBonusStatus.rewardAmount} coins
+                          Claim +{dailyBonusStatus.rewardAmount}¢
                         </span>
                       ) : (
                         <span className="font-mono-num text-[11px] text-stone-400 shrink-0">
@@ -1248,31 +1239,56 @@ export default function App() {
 
           {/* Non-Blocking Upper Win / Bonus Callout Zone */}
           <div className="flex flex-col items-center justify-start pt-1 px-4 pointer-events-none">
-            {bonusBannerText && (
-              <div className="mb-1.5 px-4 py-1.5 rounded-xl bg-[#1f0c24]/92 border border-fuchsia-400/50 text-fuchsia-200 font-display text-xs sm:text-sm font-bold tracking-wider uppercase shadow-lg">
-                {bonusBannerText}
-              </div>
-            )}
+            <AnimatePresence>
+              {bonusBannerText && (
+                <motion.div
+                  key={bonusBannerText}
+                  initial={{ opacity: 0, y: -10, scale: 0.88 }}
+                  animate={{ opacity: 1, y: 0, scale: [0.9, 1.05, 1] }}
+                  exit={{ opacity: 0, y: -8, scale: 0.92 }}
+                  transition={{ duration: 0.34, ease: 'easeOut' }}
+                  className="mb-1.5 px-4 py-1.5 rounded-xl bg-[#1f0c24]/42 border border-fuchsia-400/55 text-fuchsia-100 font-display text-xs sm:text-sm font-bold tracking-wider uppercase shadow-lg drop-shadow-[0_2px_8px_rgba(0,0,0,0.95)]"
+                >
+                  {bonusBannerText}
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-            {winBanner.visible && (
-              <div
-                className={`px-5 py-1.5 rounded-xl border shadow-xl text-center transition-transform duration-150 ${
-                  winBanner.isBig
-                    ? 'bg-[#241806]/94 border-amber-400/75'
-                    : 'bg-[#0b101b]/94 border-amber-400/40'
-                }`}
-              >
-                <div className="text-[11px] uppercase tracking-[0.18em] text-amber-300 font-semibold">
-                  {winBanner.label}
-                </div>
-                <div className="font-mono-num text-lg sm:text-2xl font-bold text-white leading-tight mt-0.5">
-                  +{winBanner.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  <span className="text-xs sm:text-sm font-semibold text-amber-300/90 ml-1.5">
-                    coins
-                  </span>
-                </div>
-              </div>
-            )}
+            <AnimatePresence>
+              {winBanner.visible && (
+                <motion.div
+                  key="center-win-banner"
+                  initial={{ opacity: 0, y: -12, scale: 0.82 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8, scale: 0.9 }}
+                  transition={{ type: 'spring', stiffness: 360, damping: 24 }}
+                  className={`px-6 py-2 rounded-xl border shadow-xl text-center ${
+                    winBanner.isBig
+                      ? 'bg-[#241806]/42 border-amber-400/70'
+                      : 'bg-[#0b101b]/36 border-amber-400/45'
+                  }`}
+                >
+                  <motion.div
+                    key={`${winBanner.label}-${winBanner.amount}`}
+                    initial={{ scale: 0.88, opacity: 0.85 }}
+                    animate={{ scale: [0.9, 1.12, 1], opacity: 1 }}
+                    transition={{
+                      duration: 0.36,
+                      times: [0, 0.42, 1],
+                      ease: 'easeOut',
+                    }}
+                    className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.95)]"
+                  >
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-amber-300 font-semibold">
+                      {winBanner.label}
+                    </div>
+                    <div className="font-mono-num text-xl sm:text-3xl font-extrabold text-white leading-tight mt-0.5">
+                      +{winBanner.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}¢
+                    </div>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           {/* Bottom Ergonomic Control Dock + Card Inspect Strip */}
@@ -1324,15 +1340,12 @@ export default function App() {
                     <Minus className="w-4 h-4" />
                   </button>
 
-                  <div className="min-w-[68px] sm:min-w-[84px] text-center">
+                  <div className="min-w-[60px] sm:min-w-[74px] text-center">
                     <div className="text-[10px] uppercase tracking-wider text-stone-400 leading-none">
                       Bet
                     </div>
                     <div className="font-mono-num text-sm sm:text-base font-bold text-amber-300 mt-1 leading-none">
                       {currentBet}
-                      <span className="text-[11px] font-semibold text-amber-200/80 ml-1">
-                        {currentBet === 1 ? 'coin' : 'coins'}
-                      </span>
                     </div>
                   </div>
 
@@ -1360,7 +1373,7 @@ export default function App() {
                       className="min-h-[48px] px-5 sm:px-7 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] text-stone-950 font-bold text-sm sm:text-base flex items-center gap-2 shadow-lg shadow-emerald-500/20 transition-all cursor-pointer"
                     >
                       <RefreshCw className="w-4 h-4" />
-                      <span>Refill {REFILL_COINS} coins</span>
+                      <span>Refill {REFILL_COINS}¢</span>
                     </button>
                   ) : (
                     <button
@@ -1412,10 +1425,7 @@ export default function App() {
                       lastWin > 0 ? 'text-emerald-300' : 'text-stone-400'
                     }`}
                   >
-                    {displayWin.toFixed(2)}
-                    <span className="text-[11px] font-semibold ml-1 opacity-80">
-                      coins
-                    </span>
+                    {displayWin.toFixed(2)}¢
                   </div>
                 </div>
               </div>

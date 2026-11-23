@@ -123,7 +123,7 @@ export const TitleOverlay: React.FC<TitleOverlayProps> = ({
                 <span className="truncate font-medium">{displayName}</span>
                 {profile && (
                   <span className="font-mono-num text-amber-300 font-semibold shrink-0">
-                    · {profile.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} coins
+                    · {profile.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}¢
                   </span>
                 )}
               </button>

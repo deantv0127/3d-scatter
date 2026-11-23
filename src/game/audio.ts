@@ -127,7 +127,7 @@ class SoundEngine {
       this.stopSpeech();
     } else {
       this.unlock();
-      this.speak('Voice announcer ready', true);
+      this.speak('Voice announcer ready!', true);
     }
     this.playClick();
     return this.voiceEnabled;
@@ -465,9 +465,9 @@ class SoundEngine {
       } else {
         utter.lang = 'en-GB';
       }
-      utter.rate = 0.88;
-      utter.pitch = 0.98;
-      utter.volume = 0.84;
+      utter.rate = 1.02;
+      utter.pitch = 1.09;
+      utter.volume = 0.9;
 
       this.duckMusic(true);
       if (this.voiceDuckTimeout) {
@@ -475,7 +475,7 @@ class SoundEngine {
       }
       this.voiceDuckTimeout = window.setTimeout(() => {
         this.duckMusic(false);
-      }, 2400);
+      }, 2200);
 
       utter.onend = () => {
         if (this.voiceDuckTimeout) {
@@ -496,17 +496,17 @@ class SoundEngine {
 
   public announceMultiplier(tierMultiplier: number): void {
     const labelMap: Record<number, string> = {
-      2: 'Two times',
-      3: 'Three times',
-      4: 'Four times',
-      6: 'Six times',
-      10: 'Ten times. Sovereign.',
+      2: 'Two times!',
+      3: 'Lovely! Three times!',
+      4: 'Four times!',
+      6: 'Splendid! Six times!',
+      10: 'Magnificent! Ten times!',
     };
-    this.speak(labelMap[tierMultiplier] ?? `${tierMultiplier} times`, true);
+    this.speak(labelMap[tierMultiplier] ?? `${tierMultiplier} times!`, true);
   }
 
   public announceBonus(spinsAwarded: number): void {
-    this.speak(`Bonus unlocked. ${spinsAwarded} free spins.`, true);
+    this.speak(`Wonderful! Bonus unlocked, ${spinsAwarded} free spins!`, true);
   }
 
   private createNoiseBuffer(ctx: AudioContext): AudioBuffer {

@@ -51,7 +51,7 @@ export const PaytableModal: React.FC<PaytableModalProps> = ({
             <p className="text-xs text-stone-400 mt-0.5">
               Payouts shown for current bet of{' '}
               <span className="font-mono-num text-stone-200">
-                {bet.toFixed(2)} {bet === 1 ? 'coin' : 'coins'}
+                {bet.toFixed(2)}¢
               </span>
             </p>
           </div>
@@ -159,7 +159,7 @@ export const PaytableModal: React.FC<PaytableModalProps> = ({
                             {idx === meta.payouts.length - 1 ? '+' : ''}
                           </span>
                           <span className="text-amber-300 font-semibold">
-                            {(bet * tier.mult).toFixed(2)} coins
+                            {(bet * tier.mult).toFixed(2)}¢
                           </span>
                         </div>
                       ))}
