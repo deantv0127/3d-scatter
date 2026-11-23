@@ -11,33 +11,65 @@ class SoundEngine {
   private musicPlaying = false;
   private isFreeSpinMood = false;
 
-  // 106 BPM step sequencer state
   private schedulerId: number | null = null;
   private nextNoteTime = 0;
   private currentStep = 0;
   private voiceDuckTimeout: number | null = null;
 
-  // Minor-9th luxury lounge progression: Dm9 -> Bbmaj7 -> Gm7 -> A7sus4 (4 bars = 64 steps)
-  private readonly chords: Array<{ bass: number; pad: number[]; arp: number[] }> = [
+  // Classic Vegas Jazz-Funk ii–V–I–VI turnaround (Dm9 -> G13 -> Cmaj9 -> A7alt)
+  // 4 bars x 16 steps = 64 steps
+  private readonly bars: Array<{
+    bassLine: Array<number | null>;
+    chord: number[];
+    melody: Array<number | null>;
+  }> = [
     {
-      bass: 73.42, // D2
-      pad: [146.83, 220.0, 261.63, 329.63], // D3, A3, C4, E4
-      arp: [440.0, 523.25, 659.25, 587.33],
+      // Bar 1: Dm9 (D2 bass, F3-A3-C4-E4 Rhodes)
+      bassLine: [
+        73.42, null, null, 73.42, null, null, 110.0, null,
+        146.83, null, 130.81, null, 110.0, null, 98.0, null,
+      ],
+      chord: [174.61, 220.0, 261.63, 329.63],
+      melody: [
+        587.33, null, null, 659.25, null, null, 523.25, null,
+        null, 440.0, null, null, 523.25, null, null, null,
+      ],
     },
     {
-      bass: 58.27, // Bb1
-      pad: [116.54, 174.61, 220.0, 293.66], // Bb2, F3, A3, D4
-      arp: [349.23, 440.0, 587.33, 523.25],
+      // Bar 2: G13 (G1/G2 bass, F3-A3-B3-E4 Rhodes)
+      bassLine: [
+        98.0, null, null, 98.0, null, null, 123.47, null,
+        146.83, null, null, 123.47, 98.0, null, 110.0, null,
+      ],
+      chord: [174.61, 220.0, 246.94, 329.63],
+      melody: [
+        587.33, null, 659.25, null, 783.99, null, null, 659.25,
+        null, null, 587.33, null, 493.88, null, null, null,
+      ],
     },
     {
-      bass: 98.0, // G2
-      pad: [196.0, 233.08, 293.66, 349.23], // G3, Bb3, D4, F4
-      arp: [392.0, 466.16, 587.33, 698.46],
+      // Bar 3: Cmaj9 (C2 bass, E3-G3-B3-D4 Rhodes)
+      bassLine: [
+        65.41, null, null, 65.41, null, null, 98.0, null,
+        130.81, null, 123.47, null, 98.0, null, 82.41, null,
+      ],
+      chord: [164.81, 196.0, 246.94, 293.66],
+      melody: [
+        523.25, null, null, 659.25, null, null, 783.99, null,
+        null, 659.25, null, 587.33, 523.25, null, null, null,
+      ],
     },
     {
-      bass: 55.0, // A1
-      pad: [110.0, 164.81, 220.0, 293.66], // A2, E3, A3, D4
-      arp: [329.63, 440.0, 587.33, 659.25],
+      // Bar 4: A7#9 turnaround (A1/A2 bass, G3-C#4-E4-C5 Rhodes)
+      bassLine: [
+        55.0, null, null, 55.0, null, null, 82.41, null,
+        110.0, null, null, 98.0, 82.41, null, 65.41, null,
+      ],
+      chord: [196.0, 277.18, 329.63, 440.0],
+      melody: [
+        440.0, null, 523.25, null, 659.25, null, null, 587.33,
+        null, 554.37, null, null, 440.0, null, null, null,
+      ],
     },
   ];
 
@@ -79,7 +111,7 @@ class SoundEngine {
     this.musicEnabled = !this.musicEnabled;
     this.unlock();
     if (this.musicGain && this.ctx) {
-      const target = this.musicEnabled && !this.muted ? 0.24 : 0;
+      const target = this.musicEnabled && !this.muted ? 0.28 : 0;
       this.musicGain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.08);
     }
     if (this.musicEnabled && !this.musicPlaying) {
@@ -95,7 +127,7 @@ class SoundEngine {
       this.stopSpeech();
     } else {
       this.unlock();
-      this.speak('Voice announcer active.', true);
+      this.speak('Voice on', true);
     }
     this.playClick();
     return this.voiceEnabled;
@@ -132,7 +164,7 @@ class SoundEngine {
       this.sfxGain.connect(this.masterGain);
 
       this.musicGain = this.ctx.createGain();
-      this.musicGain.gain.value = this.musicEnabled ? 0.24 : 0;
+      this.musicGain.gain.value = this.musicEnabled ? 0.28 : 0;
       this.musicGain.connect(this.masterGain);
 
       this.noiseBuffer = this.createNoiseBuffer(this.ctx);
@@ -147,11 +179,11 @@ class SoundEngine {
     if (!this.ctx || this.musicPlaying) return;
     this.musicPlaying = true;
     this.currentStep = 0;
-    this.nextNoteTime = this.ctx.currentTime + 0.06;
+    this.nextNoteTime = this.ctx.currentTime + 0.05;
 
     if (this.musicGain) {
       this.musicGain.gain.setTargetAtTime(
-        this.musicEnabled ? 0.24 : 0,
+        this.musicEnabled ? 0.28 : 0,
         this.ctx.currentTime,
         0.15,
       );
@@ -159,7 +191,7 @@ class SoundEngine {
 
     this.schedulerId = window.setInterval(() => {
       this.scheduleMusicLookahead();
-    }, 60);
+    }, 50);
   }
 
   public stopMusic(): void {
@@ -174,73 +206,122 @@ class SoundEngine {
     if (!this.ctx || !this.musicGain || !this.musicPlaying) return;
     if (this.ctx.state === 'suspended') return;
     if (!this.musicEnabled || this.muted) {
-      // Keep cursor synced without generating voices when muted/disabled
-      this.nextNoteTime = this.ctx.currentTime + 0.06;
+      this.nextNoteTime = this.ctx.currentTime + 0.05;
       return;
     }
 
-    const stepDuration = 60 / (this.isFreeSpinMood ? 114 : 104) / 4; // 16th note
+    const bpm = this.isFreeSpinMood ? 124 : 116;
+    const stepDuration = 60 / bpm / 4; // 16th note
     while (this.nextNoteTime < this.ctx.currentTime + 0.18) {
-      this.triggerMusicStep(this.currentStep, this.nextNoteTime, stepDuration);
+      // Subtle swing on odd 16ths for authentic Vegas jazz-funk feel
+      const isOdd16th = this.currentStep % 2 === 1;
+      const swingOffset = isOdd16th ? stepDuration * 0.16 : 0;
+      this.triggerCasinoStep(
+        this.currentStep,
+        this.nextNoteTime + swingOffset,
+        stepDuration,
+      );
       this.nextNoteTime += stepDuration;
       this.currentStep = (this.currentStep + 1) % 64;
     }
   }
 
-  private triggerMusicStep(step: number, time: number, stepDur: number): void {
+  private triggerCasinoStep(step: number, time: number, stepDur: number): void {
     if (!this.ctx || !this.musicGain) return;
     const barIdx = Math.floor(step / 16);
     const stepInBar = step % 16;
-    const chord = this.chords[barIdx];
+    const bar = this.bars[barIdx];
 
-    // Warm pad chord on beat 1 of each bar
-    if (stepInBar === 0) {
-      const padDur = stepDur * 15.5;
-      chord.pad.forEach((freq, idx) => {
-        if (!this.ctx || !this.musicGain) return;
-        const osc = this.ctx.createOscillator();
-        const filter = this.ctx.createBiquadFilter();
-        const gain = this.ctx.createGain();
-        osc.type = idx % 2 === 0 ? 'sine' : 'triangle';
-        osc.frequency.setValueAtTime(freq, time);
-        filter.type = 'lowpass';
-        filter.frequency.setValueAtTime(this.isFreeSpinMood ? 980 : 720, time);
-
-        gain.gain.setValueAtTime(0.0001, time);
-        gain.gain.linearRampToValueAtTime(0.085, time + 0.18);
-        gain.gain.setValueAtTime(0.075, time + padDur - 0.25);
-        gain.gain.exponentialRampToValueAtTime(0.0001, time + padDur);
-
-        osc.connect(filter);
-        filter.connect(gain);
-        gain.connect(this.musicGain);
-        osc.start(time);
-        osc.stop(time + padDur + 0.02);
-      });
+    // 1. Tight Casino Kick Drum (beats 0, 8 in base; 0, 4, 8, 12 in Free Spins)
+    const hitKick = this.isFreeSpinMood
+      ? stepInBar % 4 === 0
+      : stepInBar === 0 || stepInBar === 8 || stepInBar === 10;
+    if (hitKick) {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(125, time);
+      osc.frequency.exponentialRampToValueAtTime(44, time + 0.085);
+      gain.gain.setValueAtTime(0.38, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.14);
+      osc.connect(gain);
+      gain.connect(this.musicGain);
+      osc.start(time);
+      osc.stop(time + 0.15);
     }
 
-    // Smooth lounge bass groove (steps 0, 6, 8, 12)
-    if (
-      stepInBar === 0 ||
-      stepInBar === 6 ||
-      stepInBar === 8 ||
-      stepInBar === 12
-    ) {
+    // 2. Crisp Rimshot / Snare Backbeat (steps 4 and 12)
+    if (stepInBar === 4 || stepInBar === 12) {
+      // Woody rim body
+      const body = this.ctx.createOscillator();
+      const bodyGain = this.ctx.createGain();
+      body.type = 'triangle';
+      body.frequency.setValueAtTime(210, time);
+      body.frequency.exponentialRampToValueAtTime(110, time + 0.045);
+      bodyGain.gain.setValueAtTime(0.16, time);
+      bodyGain.gain.exponentialRampToValueAtTime(0.001, time + 0.065);
+      body.connect(bodyGain);
+      bodyGain.connect(this.musicGain);
+      body.start(time);
+      body.stop(time + 0.07);
+
+      // Snare crisp brush
+      if (this.noiseBuffer) {
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.noiseBuffer;
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(2400, time);
+        filter.Q.value = 1.2;
+        const nGain = this.ctx.createGain();
+        nGain.gain.setValueAtTime(0.11, time);
+        nGain.gain.exponentialRampToValueAtTime(0.001, time + 0.08);
+        src.connect(filter);
+        filter.connect(nGain);
+        nGain.connect(this.musicGain);
+        src.start(time);
+        src.stop(time + 0.09);
+      }
+    }
+
+    // 3. Swung Jazz Hi-Hat Groove
+    if (stepInBar % 2 === 0 || (this.isFreeSpinMood && stepInBar % 2 === 1)) {
+      if (this.noiseBuffer) {
+        const isOffbeat = stepInBar % 4 === 2;
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.noiseBuffer;
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'highpass';
+        filter.frequency.setValueAtTime(6400, time);
+        const gain = this.ctx.createGain();
+        const level = isOffbeat ? 0.065 : stepInBar % 4 === 0 ? 0.032 : 0.018;
+        const hatDur = isOffbeat ? 0.055 : 0.028;
+        gain.gain.setValueAtTime(level, time);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + hatDur);
+        src.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.musicGain);
+        src.start(time);
+        src.stop(time + hatDur + 0.01);
+      }
+    }
+
+    // 4. Funky Walking Casino Bassline
+    const bassFreq = bar.bassLine[stepInBar];
+    if (bassFreq) {
       const osc = this.ctx.createOscillator();
       const filter = this.ctx.createBiquadFilter();
       const gain = this.ctx.createGain();
-      const bassNote =
-        stepInBar === 12 ? chord.bass * 1.5 : chord.bass;
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(bassNote, time);
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(bassFreq, time);
       filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(360, time);
+      filter.frequency.setValueAtTime(680, time);
+      filter.frequency.exponentialRampToValueAtTime(260, time + stepDur * 1.8);
 
-      const dur = stepInBar === 0 ? stepDur * 4.5 : stepDur * 2.2;
+      const dur = stepDur * 1.85;
       gain.gain.setValueAtTime(0.001, time);
-      gain.gain.linearRampToValueAtTime(0.24, time + 0.015);
+      gain.gain.linearRampToValueAtTime(0.22, time + 0.012);
       gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
-
       osc.connect(filter);
       filter.connect(gain);
       gain.connect(this.musicGain);
@@ -248,49 +329,70 @@ class SoundEngine {
       osc.stop(time + dur + 0.02);
     }
 
-    // Soft brushed casino shaker on off-beats (2, 6, 10, 14)
-    if (stepInBar % 4 === 2 && this.noiseBuffer) {
-      const src = this.ctx.createBufferSource();
-      src.buffer = this.noiseBuffer;
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = 'highpass';
-      filter.frequency.setValueAtTime(4800, time);
-      const gain = this.ctx.createGain();
-      gain.gain.setValueAtTime(0.04, time);
-      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.045);
-      src.connect(filter);
-      filter.connect(gain);
-      gain.connect(this.musicGain);
-      src.start(time);
-      src.stop(time + 0.05);
+    // 5. Syncopated Electric Piano / Rhodes Jazz Chords (steps 0, 6, 14)
+    const isShortStab = stepInBar === 6 || stepInBar === 14;
+    if (stepInBar === 0 || isShortStab) {
+      const chordDur = isShortStab ? stepDur * 1.9 : stepDur * 4.8;
+      bar.chord.forEach((freq, idx) => {
+        if (!this.ctx || !this.musicGain) return;
+        const osc = this.ctx.createOscillator();
+        const filter = this.ctx.createBiquadFilter();
+        const gain = this.ctx.createGain();
+        osc.type = idx === 0 ? 'triangle' : 'sine';
+        osc.frequency.setValueAtTime(freq, time);
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(isShortStab ? 1850 : 1400, time);
+
+        const amp = isShortStab ? 0.058 : 0.068;
+        gain.gain.setValueAtTime(0.0005, time);
+        gain.gain.linearRampToValueAtTime(amp, time + 0.014);
+        gain.gain.exponentialRampToValueAtTime(0.0005, time + chordDur);
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.musicGain);
+        osc.start(time);
+        osc.stop(time + chordDur + 0.02);
+      });
     }
 
-    // Delicate Rhodes/bell shimmer arpeggio accents
-    if (
-      stepInBar === 4 ||
-      stepInBar === 10 ||
-      (this.isFreeSpinMood && (stepInBar === 2 || stepInBar === 14))
-    ) {
-      const noteIdx = (barIdx + Math.floor(stepInBar / 2)) % chord.arp.length;
+    // 6. Crisp Vegas Vibraphone Melody Hook
+    const melFreq = bar.melody[stepInBar];
+    if (melFreq) {
       const osc = this.ctx.createOscillator();
+      const overtone = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
+      const ovGain = this.ctx.createGain();
+
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(chord.arp[noteIdx], time);
+      osc.frequency.setValueAtTime(melFreq, time);
+      overtone.type = 'sine';
+      overtone.frequency.setValueAtTime(melFreq * 4, time); // vibraphone chime transient
+
+      const dur = stepDur * 2.8;
       gain.gain.setValueAtTime(0.001, time);
-      gain.gain.linearRampToValueAtTime(0.065, time + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0005, time + stepDur * 3.5);
+      gain.gain.linearRampToValueAtTime(0.08, time + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0005, time + dur);
+
+      ovGain.gain.setValueAtTime(0.024, time);
+      ovGain.gain.exponentialRampToValueAtTime(0.0005, time + 0.065);
+
       osc.connect(gain);
+      overtone.connect(ovGain);
       gain.connect(this.musicGain);
+      ovGain.connect(this.musicGain);
+
       osc.start(time);
-      osc.stop(time + stepDur * 3.6);
+      overtone.start(time);
+      osc.stop(time + dur + 0.02);
+      overtone.stop(time + 0.075);
     }
   }
 
   private duckMusic(duck: boolean): void {
     if (!this.ctx || !this.musicGain) return;
     if (!this.musicEnabled || this.muted) return;
-    const target = duck ? 0.07 : 0.24;
-    this.musicGain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.08);
+    const target = duck ? 0.09 : 0.28;
+    this.musicGain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.07);
   }
 
   public stopSpeech(): void {
@@ -327,8 +429,8 @@ class SoundEngine {
         utter.voice = preferred;
       }
       utter.lang = 'en-US';
-      utter.rate = 1.04;
-      utter.pitch = 1.0;
+      utter.rate = 1.12;
+      utter.pitch = 1.02;
       utter.volume = 0.92;
 
       this.duckMusic(true);
@@ -337,7 +439,7 @@ class SoundEngine {
       }
       this.voiceDuckTimeout = window.setTimeout(() => {
         this.duckMusic(false);
-      }, 3600);
+      }, 1800);
 
       utter.onend = () => {
         if (this.voiceDuckTimeout) {
@@ -356,43 +458,16 @@ class SoundEngine {
     }
   }
 
-  public announceMultiplier(tierMultiplier: number, isMaxTier: boolean): void {
-    const phrase = isMaxTier
-      ? `${tierMultiplier}x maximum multiplier!`
-      : `${tierMultiplier}x multiplier`;
-    this.speak(phrase, true);
+  public announceMultiplier(tierMultiplier: number): void {
+    this.speak(`${tierMultiplier} times`, true);
   }
 
   public announceFoilMultiplier(totalExtra: number): void {
-    this.speak(`Multiplier boosted to ${totalExtra}x!`, true);
+    this.speak(`${totalExtra} times`, true);
   }
 
-  public announceWin(
-    amount: number,
-    peakMultiplier: number,
-    isBig: boolean,
-  ): void {
-    const whole = Math.floor(amount);
-    const cents = Math.round((amount - whole) * 100);
-    const moneyText =
-      cents > 0
-        ? `${whole} dollars and ${cents} cents`
-        : `${whole} ${whole === 1 ? 'dollar' : 'dollars'}`;
-
-    const prefix = isBig ? 'Sovereign win!' : 'You won';
-    const multNote =
-      peakMultiplier >= 2 ? ` at ${peakMultiplier}x multiplier` : '';
-    const line = isBig
-      ? `${prefix} ${moneyText}${multNote}!`
-      : `${prefix} ${moneyText}${multNote}.`;
-    this.speak(line, true);
-  }
-
-  public announceBonus(spinsAwarded: number, retrigger: boolean): void {
-    const line = retrigger
-      ? `Bonus retriggered! Plus ${spinsAwarded} free spins!`
-      : `Arcana vault unlocked! ${spinsAwarded} free spins!`;
-    this.speak(line, true);
+  public announceBonus(spinsAwarded: number): void {
+    this.speak(`${spinsAwarded} free spins`, true);
   }
 
   private createNoiseBuffer(ctx: AudioContext): AudioBuffer {

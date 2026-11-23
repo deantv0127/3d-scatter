@@ -105,7 +105,6 @@ export default function App() {
 
   const inspectTimeoutRef = useRef<number | null>(null);
   const winAnimRef = useRef<number | null>(null);
-  const voiceTimeoutRef = useRef<number | null>(null);
 
   const currentBet = BET_STEPS[betIndex];
 
@@ -130,7 +129,7 @@ export default function App() {
         runningWin: number,
       ) => {
         setActiveCascadeIndex(stepIndex);
-        soundEngine.announceMultiplier(tierMultiplier, tierMultiplier === 10);
+        soundEngine.announceMultiplier(tierMultiplier);
         setWinBanner({
           visible: true,
           label: `Cascade ${stepIndex + 1} · ${tierMultiplier}× Grid`,
@@ -158,9 +157,6 @@ export default function App() {
     return () => {
       if (inspectTimeoutRef.current) {
         window.clearTimeout(inspectTimeoutRef.current);
-      }
-      if (voiceTimeoutRef.current) {
-        window.clearTimeout(voiceTimeoutRef.current);
       }
       if (winAnimRef.current) {
         cancelAnimationFrame(winAnimRef.current);
@@ -229,11 +225,6 @@ export default function App() {
       return;
     }
 
-    if (voiceTimeoutRef.current) {
-      window.clearTimeout(voiceTimeoutRef.current);
-      voiceTimeoutRef.current = null;
-    }
-
     soundEngine.unlock();
     soundEngine.startMusic();
     setIsSpinning(true);
@@ -276,17 +267,6 @@ export default function App() {
         isBig,
       });
 
-      const effectivePeakMult =
-        outcome.extraMultiplierFactor > 1
-          ? outcome.peakTierMultiplier * outcome.extraMultiplierFactor
-          : outcome.peakTierMultiplier;
-
-      if (outcome.awardedFreeSpins === 0) {
-        voiceTimeoutRef.current = window.setTimeout(() => {
-          soundEngine.announceWin(outcome.totalWin, effectivePeakMult, isBig);
-        }, 260);
-      }
-
       if (inFreeSpin) {
         setFreeSpinRoundWin(
           (prev) => Math.round((prev + outcome.totalWin) * 100) / 100,
@@ -307,7 +287,7 @@ export default function App() {
           ? `+${outcome.awardedFreeSpins} Extra Free Spins`
           : `Arcana Vault Unlocked · ${outcome.awardedFreeSpins} Free Spins`,
       );
-      soundEngine.announceBonus(outcome.awardedFreeSpins, inFreeSpin);
+      soundEngine.announceBonus(outcome.awardedFreeSpins);
       if (!inFreeSpin) {
         setFreeSpinGlobalMult(Math.max(1, outcome.boardMultiplierSum));
         setFreeSpinRoundWin(0);
