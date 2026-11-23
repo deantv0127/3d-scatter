@@ -17,7 +17,7 @@ const DISPLAY_ORDER: SymbolId[] = [
   'DIAMOND',
 ];
 
-const SPECIAL_ORDER: SymbolId[] = ['MULTIPLIER', 'WILD', 'BONUS'];
+const SPECIAL_ORDER: SymbolId[] = ['WILD', 'BONUS'];
 
 export const PaytableModal: React.FC<PaytableModalProps> = ({
   bet,
@@ -84,8 +84,8 @@ export const PaytableModal: React.FC<PaytableModalProps> = ({
             </div>
             <p className="text-xs text-stone-400 mt-1.5 leading-relaxed">
               Each consecutive scatter cascade advances the multiplier rail above
-              the grid from 2× up to 10×. Any Foil Multiplier seals on the board
-              multiply on top of your cascade total.
+              the grid from 2× up to 10×. Land 3 or more Arcana Scatter (✦) cards
+              anywhere to trigger 10 Free Spins.
             </p>
           </section>
 

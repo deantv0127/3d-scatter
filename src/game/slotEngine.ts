@@ -4,7 +4,6 @@ import {
   getCascadeTierMultiplier,
   GRID_COLS,
   GRID_ROWS,
-  MultiplierValue,
   SpinOutcome,
   SYMBOL_METADATA,
   SymbolId,
@@ -25,30 +24,20 @@ const BASE_WEIGHTS: Array<{ symbol: SymbolId; weight: number }> = [
   { symbol: 'QUEEN', weight: 11 },
   { symbol: 'KING', weight: 9 },
   { symbol: 'ACE', weight: 7 },
-  { symbol: 'WILD', weight: 4.4 },
-  { symbol: 'MULTIPLIER', weight: 4.6 },
-  { symbol: 'BONUS', weight: 3.4 },
+  { symbol: 'WILD', weight: 4.5 },
+  { symbol: 'BONUS', weight: 3.8 },
 ];
 
 const FREE_SPIN_WEIGHTS: Array<{ symbol: SymbolId; weight: number }> = [
-  { symbol: 'DIAMOND', weight: 20 },
-  { symbol: 'CLUB', weight: 19 },
-  { symbol: 'HEART', weight: 17 },
+  { symbol: 'DIAMOND', weight: 18 },
+  { symbol: 'CLUB', weight: 17 },
+  { symbol: 'HEART', weight: 16 },
   { symbol: 'SPADE', weight: 15 },
-  { symbol: 'QUEEN', weight: 11 },
-  { symbol: 'KING', weight: 10 },
-  { symbol: 'ACE', weight: 8 },
-  { symbol: 'WILD', weight: 5.5 },
-  { symbol: 'MULTIPLIER', weight: 7.2 },
-  { symbol: 'BONUS', weight: 2.8 },
-];
-
-const MULTIPLIER_WEIGHTS: Array<{ value: MultiplierValue; weight: number }> = [
-  { value: 2, weight: 52 },
-  { value: 3, weight: 26 },
-  { value: 5, weight: 14 },
-  { value: 10, weight: 6 },
-  { value: 25, weight: 2 },
+  { symbol: 'QUEEN', weight: 13 },
+  { symbol: 'KING', weight: 11 },
+  { symbol: 'ACE', weight: 9 },
+  { symbol: 'WILD', weight: 7.0 },
+  { symbol: 'BONUS', weight: 3.2 },
 ];
 
 const REGULAR_SYMBOLS: SymbolId[] = [
@@ -85,46 +74,32 @@ function rollCard(
   if (!allowBonus && picked === 'BONUS') {
     picked = 'HEART';
   }
-  const cell: CardCellData = {
+  return {
     id: nextCardId(),
     col,
     row,
     symbol: picked,
   };
-  if (picked === 'MULTIPLIER') {
-    cell.multiplier = pickWeighted(MULTIPLIER_WEIGHTS).value;
-  }
-  return cell;
 }
 
 export function createShowcaseGrid(): CardCellData[][] {
-  const preset: Array<Array<{ symbol: SymbolId; multiplier?: MultiplierValue }>> = [
-    [{ symbol: 'KING' }, { symbol: 'DIAMOND' }, { symbol: 'ACE' }],
-    [
-      { symbol: 'ACE' },
-      { symbol: 'MULTIPLIER', multiplier: 5 },
-      { symbol: 'HEART' },
-    ],
-    [{ symbol: 'QUEEN' }, { symbol: 'WILD' }, { symbol: 'SPADE' }],
-    [
-      { symbol: 'MULTIPLIER', multiplier: 3 },
-      { symbol: 'ACE' },
-      { symbol: 'CLUB' },
-    ],
-    [{ symbol: 'BONUS' }, { symbol: 'KING' }, { symbol: 'ACE' }],
+  const preset: SymbolId[][] = [
+    ['KING', 'DIAMOND', 'ACE'],
+    ['ACE', 'BONUS', 'HEART'],
+    ['QUEEN', 'WILD', 'SPADE'],
+    ['BONUS', 'ACE', 'CLUB'],
+    ['KING', 'BONUS', 'ACE'],
   ];
 
   const grid: CardCellData[][] = [];
   for (let col = 0; col < GRID_COLS; col += 1) {
     const column: CardCellData[] = [];
     for (let row = 0; row < GRID_ROWS; row += 1) {
-      const spec = preset[col][row];
       column.push({
         id: nextCardId(),
         col,
         row,
-        symbol: spec.symbol,
-        multiplier: spec.multiplier,
+        symbol: preset[col][row],
       });
     }
     grid.push(column);
@@ -194,7 +169,6 @@ function evaluateGridWins(grid: CardCellData[][], bet: number): WinningGroup[] {
 export function resolveSpinOutcome(
   bet: number,
   isFreeSpin: boolean,
-  persistentFreeSpinMultiplier: number,
 ): SpinOutcome {
   let currentGrid: CardCellData[][] = [];
   for (let col = 0; col < GRID_COLS; col += 1) {
@@ -210,7 +184,7 @@ export function resolveSpinOutcome(
 
   const initialGrid = cloneGrid(currentGrid);
   const cascades: CascadeStep[] = [];
-  let cascadeSubtotalWin = 0;
+  let totalWin = 0;
   let peakTierMultiplier = 1;
   let stepIndex = 0;
 
@@ -233,7 +207,7 @@ export function resolveSpinOutcome(
     const tierMultiplier = getCascadeTierMultiplier(stepIndex);
     peakTierMultiplier = Math.max(peakTierMultiplier, tierMultiplier);
     const stepWin = Math.round(rawStepWin * tierMultiplier * 100) / 100;
-    cascadeSubtotalWin = Math.round((cascadeSubtotalWin + stepWin) * 100) / 100;
+    totalWin = Math.round((totalWin + stepWin) * 100) / 100;
 
     const removedPositions: Array<{ col: number; row: number }> = [];
     const drops: CascadeStep['drops'] = [];
@@ -299,54 +273,23 @@ export function resolveSpinOutcome(
     stepIndex += 1;
   }
 
-  // Gather foil multipliers & bonus cards on the settled board
-  const boardMultipliers: SpinOutcome['boardMultipliers'] = [];
-  let boardMultiplierSum = 0;
+  // Count Arcana Bonus Scatter cards on the settled board (3+ awards 10 Free Spins)
   let bonusCount = 0;
-
   for (let col = 0; col < GRID_COLS; col += 1) {
     for (let row = 0; row < GRID_ROWS; row += 1) {
-      const cell = currentGrid[col][row];
-      if (cell.symbol === 'MULTIPLIER' && cell.multiplier) {
-        boardMultipliers.push({ col, row, value: cell.multiplier });
-        boardMultiplierSum += cell.multiplier;
-      } else if (cell.symbol === 'BONUS') {
+      if (currentGrid[col][row].symbol === 'BONUS') {
         bonusCount += 1;
       }
     }
   }
 
-  let extraMultiplierFactor = 1;
-  if (cascadeSubtotalWin > 0) {
-    if (isFreeSpin) {
-      extraMultiplierFactor = Math.max(
-        1,
-        persistentFreeSpinMultiplier + boardMultiplierSum,
-      );
-    } else if (boardMultiplierSum > 0) {
-      extraMultiplierFactor = boardMultiplierSum;
-    }
-  }
-
-  const totalWin =
-    Math.round(cascadeSubtotalWin * extraMultiplierFactor * 100) / 100;
-
-  let awardedFreeSpins = 0;
-  if (bonusCount >= 3) {
-    awardedFreeSpins = isFreeSpin
-      ? 4 + (bonusCount - 3) * 2
-      : 8 + (bonusCount - 3) * 2;
-  }
+  const awardedFreeSpins = bonusCount >= 3 ? 10 : 0;
 
   return {
     initialGrid,
     cascades,
     finalGrid: currentGrid,
     peakTierMultiplier,
-    cascadeSubtotalWin,
-    boardMultipliers,
-    boardMultiplierSum,
-    extraMultiplierFactor,
     totalWin,
     bonusCount,
     awardedFreeSpins,

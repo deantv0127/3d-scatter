@@ -462,10 +462,6 @@ class SoundEngine {
     this.speak(`${tierMultiplier} times`, true);
   }
 
-  public announceFoilMultiplier(totalExtra: number): void {
-    this.speak(`${totalExtra} times`, true);
-  }
-
   public announceBonus(spinsAwarded: number): void {
     this.speak(`${spinsAwarded} free spins`, true);
   }
@@ -688,6 +684,74 @@ class SoundEngine {
     gain.connect(this.sfxGain);
     osc.start(now);
     osc.stop(now + 0.06);
+  }
+
+  public playRollupTick(progress01: number): void {
+    if (!this.ensureSfxReady() || !this.ctx || !this.sfxGain) return;
+    const now = this.ctx.currentTime;
+    const p = Math.max(0, Math.min(1, progress01));
+    const baseFreq = 520 + p * 660;
+
+    const osc = this.ctx.createOscillator();
+    const shimmer = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(baseFreq, now);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.06, now + 0.045);
+
+    shimmer.type = 'sine';
+    shimmer.frequency.setValueAtTime(baseFreq * 1.5, now);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.075, now + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.065);
+
+    osc.connect(gain);
+    shimmer.connect(gain);
+    gain.connect(this.sfxGain);
+
+    osc.start(now);
+    shimmer.start(now);
+    osc.stop(now + 0.07);
+    shimmer.stop(now + 0.07);
+  }
+
+  public playFreeSpinFinale(hasWin: boolean): void {
+    if (!this.ensureSfxReady() || !this.ctx || !this.sfxGain) return;
+    const now = this.ctx.currentTime;
+    const notes = hasWin
+      ? [523.25, 659.25, 783.99, 1046.5, 1318.51, 1567.98]
+      : [440.0, 523.25];
+
+    notes.forEach((freq, idx) => {
+      if (!this.ctx || !this.sfxGain) return;
+      const t = now + idx * 0.065;
+      const osc = this.ctx.createOscillator();
+      const harmonic = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.type = hasWin ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+
+      harmonic.type = 'sine';
+      harmonic.frequency.setValueAtTime(freq * 2, t);
+
+      const peak = hasWin ? 0.14 : 0.08;
+      const decay = idx === notes.length - 1 ? 0.85 : 0.45;
+      gain.gain.setValueAtTime(0.001, t);
+      gain.gain.linearRampToValueAtTime(peak, t + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + decay);
+
+      osc.connect(gain);
+      harmonic.connect(gain);
+      gain.connect(this.sfxGain);
+
+      osc.start(t);
+      harmonic.start(t);
+      osc.stop(t + decay + 0.03);
+      harmonic.stop(t + decay + 0.03);
+    });
   }
 
   public playInspect(): void {

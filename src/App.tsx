@@ -15,6 +15,7 @@ import {
   VolumeX,
   Zap,
 } from 'lucide-react';
+import { FreeSpinSummaryModal } from './components/FreeSpinSummaryModal';
 import { PaytableModal } from './components/PaytableModal';
 import { TitleOverlay } from './components/TitleOverlay';
 import { soundEngine } from './game/audio';
@@ -25,7 +26,6 @@ import {
   CardCellData,
   CASCADE_MULTIPLIER_TIERS,
   CascadeTierMultiplier,
-  MultiplierValue,
   SYMBOL_METADATA,
 } from './game/types';
 
@@ -35,7 +35,6 @@ interface WinBannerState {
   visible: boolean;
   label: string;
   amount: number;
-  extraMultiplier: number;
   isBig: boolean;
 }
 
@@ -58,12 +57,14 @@ export default function App() {
 
   // Grid Window Cascade Multiplier Progression (2x, 3x, 4x, 6x, 10x)
   const [activeCascadeIndex, setActiveCascadeIndex] = useState<number>(-1);
-  const [activeFoilBoost, setActiveFoilBoost] = useState<number>(1);
 
-  // Free Spins & Foil Multiplier Progression
+  // 10 Free Spins Scatter Bonus & Deferred Pot Accumulation
   const [freeSpinsLeft, setFreeSpinsLeft] = useState<number>(0);
-  const [freeSpinGlobalMult, setFreeSpinGlobalMult] = useState<number>(0);
-  const [freeSpinRoundWin, setFreeSpinRoundWin] = useState<number>(0);
+  const [freeSpinPot, setFreeSpinPot] = useState<number>(0);
+  const [freeSpinSummary, setFreeSpinSummary] = useState<{
+    totalWin: number;
+    spinsPlayed: number;
+  } | null>(null);
 
   // Live Win & Cascade Callouts
   const [lastWin, setLastWin] = useState<number>(0);
@@ -72,7 +73,6 @@ export default function App() {
     visible: false,
     label: '',
     amount: 0,
-    extraMultiplier: 1,
     isBig: false,
   });
   const [bonusBannerText, setBonusBannerText] = useState<string | null>(null);
@@ -86,9 +86,8 @@ export default function App() {
     turboMode,
     autoPlay,
     freeSpinsLeft,
-    freeSpinGlobalMult,
-    freeSpinRoundWin,
     showPaytable,
+    freeSpinSummary,
   });
   stateRef.current = {
     phase,
@@ -98,11 +97,15 @@ export default function App() {
     turboMode,
     autoPlay,
     freeSpinsLeft,
-    freeSpinGlobalMult,
-    freeSpinRoundWin,
     showPaytable,
+    freeSpinSummary,
   };
 
+  const freeSpinsLeftRef = useRef<number>(0);
+  const freeSpinPotRef = useRef<number>(0);
+  const freeSpinsPlayedRef = useRef<number>(0);
+  const bonusCollectedRef = useRef<boolean>(false);
+  const mountedRef = useRef<boolean>(true);
   const inspectTimeoutRef = useRef<number | null>(null);
   const winAnimRef = useRef<number | null>(null);
 
@@ -134,19 +137,8 @@ export default function App() {
           visible: true,
           label: `Cascade ${stepIndex + 1} · ${tierMultiplier}× Grid`,
           amount: runningWin,
-          extraMultiplier: 1,
           isBig: false,
         });
-      },
-      onMultiplierPulse: (value: MultiplierValue, totalExtraFactor: number) => {
-        setActiveFoilBoost(totalExtraFactor);
-        soundEngine.announceFoilMultiplier(totalExtraFactor);
-        setWinBanner((prev) => ({
-          ...prev,
-          visible: true,
-          label: `Foil Seal +${value}×`,
-          extraMultiplier: totalExtraFactor,
-        }));
       },
       onContextLostChange: (lost) => {
         setContextLost(lost);
@@ -154,7 +146,9 @@ export default function App() {
     });
 
     stageRef.current = stage;
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (inspectTimeoutRef.current) {
         window.clearTimeout(inspectTimeoutRef.current);
       }
@@ -168,10 +162,9 @@ export default function App() {
     };
   }, []);
 
-  // Sync free spin mood for background slot music
   useEffect(() => {
-    soundEngine.setFreeSpinMood(freeSpinsLeft > 0);
-  }, [freeSpinsLeft]);
+    soundEngine.setFreeSpinMood(freeSpinsLeft > 0 || freeSpinSummary !== null);
+  }, [freeSpinsLeft, freeSpinSummary]);
 
   const animateWinCounter = useCallback((target: number) => {
     if (winAnimRef.current) {
@@ -213,12 +206,19 @@ export default function App() {
 
   const executeSpin = useCallback(async () => {
     const s = stateRef.current;
-    if (s.isSpinning || s.phase !== 'playing' || s.showPaytable) return;
+    if (
+      s.isSpinning ||
+      s.phase !== 'playing' ||
+      s.showPaytable ||
+      s.freeSpinSummary !== null
+    ) {
+      return;
+    }
     const stage = stageRef.current;
     if (!stage) return;
 
     const bet = BET_STEPS[s.betIndex];
-    const inFreeSpin = s.freeSpinsLeft > 0;
+    const inFreeSpin = freeSpinsLeftRef.current > 0;
 
     if (!inFreeSpin && s.balance < bet) {
       setAutoPlay(false);
@@ -229,78 +229,128 @@ export default function App() {
     soundEngine.startMusic();
     setIsSpinning(true);
     setActiveCascadeIndex(-1);
-    setActiveFoilBoost(inFreeSpin && s.freeSpinGlobalMult > 0 ? s.freeSpinGlobalMult : 1);
     setInspectedCard(null);
     setBonusBannerText(null);
     setWinBanner({
       visible: false,
       label: '',
       amount: 0,
-      extraMultiplier: 1,
       isBig: false,
     });
 
     if (inFreeSpin) {
-      setFreeSpinsLeft((prev) => Math.max(0, prev - 1));
+      freeSpinsLeftRef.current = Math.max(0, freeSpinsLeftRef.current - 1);
+      setFreeSpinsLeft(freeSpinsLeftRef.current);
+      freeSpinsPlayedRef.current += 1;
     } else {
       setBalance((prev) => Math.round((prev - bet) * 100) / 100);
     }
 
-    const outcome = resolveSpinOutcome(
-      bet,
-      inFreeSpin,
-      inFreeSpin ? s.freeSpinGlobalMult : 0,
-    );
+    const outcome = resolveSpinOutcome(bet, inFreeSpin);
 
     await stage.playSpinSequence(outcome, s.turboMode);
+    if (!mountedRef.current) return;
+
+    if (outcome.awardedFreeSpins > 0) {
+      if (!inFreeSpin) {
+        freeSpinPotRef.current = 0;
+        setFreeSpinPot(0);
+        freeSpinsPlayedRef.current = 0;
+      }
+      freeSpinsLeftRef.current += outcome.awardedFreeSpins;
+      setFreeSpinsLeft(freeSpinsLeftRef.current);
+      setBonusBannerText(
+        inFreeSpin
+          ? `Scatter Retrigger · +${outcome.awardedFreeSpins} Free Spins`
+          : `Scatter Bonus · ${outcome.awardedFreeSpins} Free Spins`,
+      );
+      soundEngine.announceBonus(outcome.awardedFreeSpins);
+    }
 
     if (outcome.totalWin > 0) {
       const isBig = outcome.totalWin >= bet * 10;
-      setBalance((prev) => Math.round((prev + outcome.totalWin) * 100) / 100);
       setLastWin(outcome.totalWin);
       animateWinCounter(outcome.totalWin);
-      setWinBanner({
-        visible: true,
-        label: isBig ? 'Sovereign Win' : 'Total Win',
-        amount: outcome.totalWin,
-        extraMultiplier: outcome.extraMultiplierFactor,
-        isBig,
-      });
 
       if (inFreeSpin) {
-        setFreeSpinRoundWin(
-          (prev) => Math.round((prev + outcome.totalWin) * 100) / 100,
-        );
-        if (outcome.boardMultiplierSum > 0) {
-          setFreeSpinGlobalMult((prev) => prev + outcome.boardMultiplierSum);
-        }
+        // Defer crediting balance during Free Spins; sum into the Bonus Pot instead
+        const updatedPot =
+          Math.round((freeSpinPotRef.current + outcome.totalWin) * 100) / 100;
+        freeSpinPotRef.current = updatedPot;
+        setFreeSpinPot(updatedPot);
+        setWinBanner({
+          visible: true,
+          label: isBig ? 'Bonus Pot · Sovereign Hit' : 'Added to Bonus Pot',
+          amount: outcome.totalWin,
+          isBig,
+        });
+      } else {
+        setBalance((prev) => Math.round((prev + outcome.totalWin) * 100) / 100);
+        setWinBanner({
+          visible: true,
+          label: isBig ? 'Sovereign Win' : 'Total Win',
+          amount: outcome.totalWin,
+          isBig,
+        });
       }
     } else {
       setLastWin(0);
       setDisplayWin(0);
     }
 
-    if (outcome.awardedFreeSpins > 0) {
-      setFreeSpinsLeft((prev) => prev + outcome.awardedFreeSpins);
-      setBonusBannerText(
-        inFreeSpin
-          ? `+${outcome.awardedFreeSpins} Extra Free Spins`
-          : `Arcana Vault Unlocked · ${outcome.awardedFreeSpins} Free Spins`,
-      );
-      soundEngine.announceBonus(outcome.awardedFreeSpins);
-      if (!inFreeSpin) {
-        setFreeSpinGlobalMult(Math.max(1, outcome.boardMultiplierSum));
-        setFreeSpinRoundWin(0);
-      }
-    } else if (inFreeSpin && s.freeSpinsLeft - 1 === 0) {
-      setFreeSpinGlobalMult(0);
+    // If this was the final Free Spin (and no retrigger remained), show the roll-up summary
+    if (inFreeSpin && freeSpinsLeftRef.current === 0) {
+      const pauseMs = outcome.totalWin > 0 ? 550 : 250;
+      await new Promise((resolve) => window.setTimeout(resolve, pauseMs));
+      if (!mountedRef.current) return;
+      bonusCollectedRef.current = false;
+      setFreeSpinSummary({
+        totalWin: freeSpinPotRef.current,
+        spinsPlayed: freeSpinsPlayedRef.current,
+      });
     }
 
     setIsSpinning(false);
   }, [animateWinCounter]);
 
+  const handleCollectFreeSpinSummary = useCallback(() => {
+    if (bonusCollectedRef.current) return;
+    bonusCollectedRef.current = true;
+
+    if (winAnimRef.current) {
+      cancelAnimationFrame(winAnimRef.current);
+      winAnimRef.current = null;
+    }
+
+    const total = freeSpinPotRef.current;
+    if (total > 0) {
+      setBalance((prev) => Math.round((prev + total) * 100) / 100);
+      setLastWin(total);
+      setDisplayWin(total);
+    }
+
+    freeSpinPotRef.current = 0;
+    freeSpinsPlayedRef.current = 0;
+    setFreeSpinPot(0);
+    setFreeSpinSummary(null);
+    setBonusBannerText(null);
+    setWinBanner({
+      visible: false,
+      label: '',
+      amount: 0,
+      isBig: false,
+    });
+  }, []);
+
   useEffect(() => {
-    if (isSpinning || phase !== 'playing' || showPaytable) return;
+    if (
+      isSpinning ||
+      phase !== 'playing' ||
+      showPaytable ||
+      freeSpinSummary !== null
+    ) {
+      return;
+    }
     if (freeSpinsLeft > 0 || autoPlay) {
       const bet = BET_STEPS[betIndex];
       if (freeSpinsLeft === 0 && balance < bet) {
@@ -317,6 +367,7 @@ export default function App() {
     isSpinning,
     phase,
     showPaytable,
+    freeSpinSummary,
     freeSpinsLeft,
     autoPlay,
     balance,
@@ -328,6 +379,7 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const s = stateRef.current;
+      if (s.freeSpinSummary !== null) return;
       if (e.code === 'Space' || e.code === 'Enter') {
         if (s.phase === 'title') {
           e.preventDefault();
@@ -367,7 +419,7 @@ export default function App() {
   };
 
   const handleStepBet = (dir: -1 | 1) => {
-    if (isSpinning || freeSpinsLeft > 0) return;
+    if (isSpinning || freeSpinsLeft > 0 || freeSpinSummary !== null) return;
     soundEngine.playClick();
     setBetIndex((prev) =>
       Math.max(0, Math.min(BET_STEPS.length - 1, prev + dir)),
@@ -380,8 +432,15 @@ export default function App() {
     setBalance((prev) => Math.round((prev + 1000) * 100) / 100);
   };
 
-  const canSpin = !isSpinning && (freeSpinsLeft > 0 || balance >= currentBet);
-  const needsRefill = !isSpinning && freeSpinsLeft === 0 && balance < currentBet;
+  const canSpin =
+    !isSpinning &&
+    freeSpinSummary === null &&
+    (freeSpinsLeft > 0 || balance >= currentBet);
+  const needsRefill =
+    !isSpinning &&
+    freeSpinSummary === null &&
+    freeSpinsLeft === 0 &&
+    balance < currentBet;
 
   const clampedTierIdx = Math.min(
     activeCascadeIndex,
@@ -423,7 +482,7 @@ export default function App() {
           {/* Top Compact Perimeter Bar + Premium Grid Multiplier Indicator */}
           <div className="pt-safe px-3 sm:px-6 pt-2 flex flex-col items-center gap-2">
             <header className="w-full flex items-center justify-between gap-2 sm:gap-3">
-              {/* Balance, Mobile Win & Active Bonus Readout */}
+              {/* Balance, Mobile Win & Active Free Spins Readout */}
               <div className="pointer-events-auto flex items-center gap-2.5 sm:gap-4 px-3 py-2 rounded-xl bg-[#0b101b]/92 border border-amber-400/20 shadow-lg">
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-stone-400 leading-none">
@@ -450,7 +509,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {freeSpinsLeft > 0 && (
+                {(freeSpinsLeft > 0 || freeSpinSummary !== null) && (
                   <>
                     <div className="h-6 w-px bg-white/15" aria-hidden="true" />
                     <div>
@@ -459,7 +518,15 @@ export default function App() {
                       </div>
                       <div className="font-mono-num text-sm sm:text-base font-bold text-fuchsia-200 mt-1 leading-none">
                         {freeSpinsLeft} left
-                        {freeSpinGlobalMult > 0 ? ` · +${freeSpinGlobalMult}×` : ''}
+                      </div>
+                    </div>
+                    <div className="h-6 w-px bg-white/15" aria-hidden="true" />
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-amber-300/90 leading-none">
+                        Bonus Pot
+                      </div>
+                      <div className="font-mono-num text-sm sm:text-base font-bold text-amber-300 mt-1 leading-none">
+                        ${freeSpinPot.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </div>
                   </>
@@ -556,22 +623,12 @@ export default function App() {
               className="w-full max-w-[500px] rounded-2xl bg-gradient-to-b from-[#151d2e] to-[#0a0f19] border border-amber-400/40 shadow-[0_12px_32px_rgba(0,0,0,0.65)] p-2"
               aria-label="Cascade multiplier status indicator"
             >
-              {/* Status Title & Active Multiplier Readout */}
               <div className="flex items-center justify-between px-1.5 pb-1.5 border-b border-amber-400/15">
                 <span className="font-display text-[11px] sm:text-xs font-bold tracking-[0.18em] uppercase text-amber-200/90">
-                  Multiplier Status
+                  Cascade Multiplier
                 </span>
                 <span className="font-mono-num text-xs font-bold text-amber-300">
-                  {activeGridTierMult > 1 ? (
-                    <>
-                      {activeGridTierMult}× Active
-                      {activeFoilBoost > 1 ? ` · +${activeFoilBoost}× Foil` : ''}
-                    </>
-                  ) : freeSpinGlobalMult > 0 ? (
-                    `Vault +${freeSpinGlobalMult}× Ready`
-                  ) : (
-                    '1× Ready'
-                  )}
+                  {activeGridTierMult > 1 ? `${activeGridTierMult}× Active` : '1× Ready'}
                 </span>
               </div>
 
@@ -600,7 +657,6 @@ export default function App() {
                 })}
               </div>
 
-              {/* Precision Progress Meter */}
               <div className="mt-1.5 h-1 w-full rounded-full bg-[#070a10] overflow-hidden border border-white/5">
                 <div
                   className="h-full bg-gradient-to-r from-amber-500 via-amber-300 to-yellow-200 transition-all duration-200"
@@ -628,9 +684,6 @@ export default function App() {
               >
                 <div className="text-[11px] uppercase tracking-[0.18em] text-amber-300 font-semibold">
                   {winBanner.label}
-                  {winBanner.extraMultiplier > 1
-                    ? ` · ${winBanner.extraMultiplier}× Foil`
-                    : ''}
                 </div>
                 <div className="font-mono-num text-lg sm:text-2xl font-bold text-white leading-tight mt-0.5">
                   +${winBanner.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -644,9 +697,7 @@ export default function App() {
             {inspectedCard && !isSpinning && (
               <div className="mb-2 px-4 py-2 rounded-xl bg-[#0b101b]/92 border border-amber-400/30 text-center max-w-sm shadow-lg">
                 <div className="text-xs font-semibold text-amber-300">
-                  {inspectedCard.symbol === 'MULTIPLIER'
-                    ? `${inspectedCard.multiplier}× Foil Multiplier`
-                    : SYMBOL_METADATA[inspectedCard.symbol].name}
+                  {SYMBOL_METADATA[inspectedCard.symbol].name}
                 </div>
                 <div className="text-[11px] text-stone-300 mt-0.5">
                   {SYMBOL_METADATA[inspectedCard.symbol].description}
@@ -792,6 +843,15 @@ export default function App() {
             soundEngine.playClick();
             setShowPaytable(false);
           }}
+        />
+      )}
+
+      {/* Free Spins Total Win Roll-Up Summary */}
+      {freeSpinSummary !== null && (
+        <FreeSpinSummaryModal
+          totalWin={freeSpinSummary.totalWin}
+          spinsPlayed={freeSpinSummary.spinsPlayed}
+          onCollect={handleCollectFreeSpinSummary}
         />
       )}
     </div>

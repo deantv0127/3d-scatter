@@ -8,7 +8,6 @@ import {
   CascadeTierMultiplier,
   GRID_COLS,
   GRID_ROWS,
-  MultiplierValue,
   SpinOutcome,
   SymbolId,
 } from './types';
@@ -145,7 +144,6 @@ export interface StageCallbacks {
     stepWin: number,
     runningWin: number,
   ) => void;
-  onMultiplierPulse?: (value: MultiplierValue, totalExtraFactor: number) => void;
   onContextLostChange?: (lost: boolean) => void;
 }
 
@@ -571,7 +569,7 @@ export class CardSlotStage {
     group.add(chassisMesh);
 
     const frontMat = new THREE.MeshStandardMaterial({
-      map: this.atlas.getFaceTexture(cell.symbol, cell.multiplier),
+      map: this.atlas.getFaceTexture(cell.symbol),
       roughness: 0.34,
       metalness: 0.16,
       polygonOffset: true,
@@ -642,7 +640,7 @@ export class CardSlotStage {
   private applyCellTexture(rig: CardRig, cell: CardCellData): void {
     rig.cell = { ...cell };
     // Re-assign pre-warmed texture without setting needsUpdate (avoids shader re-check stall)
-    rig.frontMat.map = this.atlas.getFaceTexture(cell.symbol, cell.multiplier);
+    rig.frontMat.map = this.atlas.getFaceTexture(cell.symbol);
   }
 
   private buildInitialCards(): void {
@@ -698,12 +696,7 @@ export class CardSlotStage {
   }
 
   private isSpecialSymbol(sym: SymbolId): boolean {
-    return (
-      sym === 'MULTIPLIER' ||
-      sym === 'WILD' ||
-      sym === 'BONUS' ||
-      sym === 'ACE'
-    );
+    return sym === 'WILD' || sym === 'BONUS' || sym === 'ACE';
   }
 
   public async playSpinSequence(
@@ -889,37 +882,7 @@ export class CardSlotStage {
       if (this.disposed) return;
     }
 
-    // Phase 4: Foil Multiplier Surge
-    if (outcome.cascadeSubtotalWin > 0 && outcome.boardMultipliers.length > 0) {
-      let runningExtra = outcome.extraMultiplierFactor - outcome.boardMultiplierSum;
-      for (const m of outcome.boardMultipliers) {
-        runningExtra += m.value;
-        const rig = this.findRigAt(m.col, m.row);
-        if (rig) {
-          rig.targetPos.z = 0.65;
-          rig.targetScale = 1.15;
-          rig.targetHighlight = 1;
-          rig.highlightColor.setHex(0xfacc15);
-          this.emitParticles(rig.pos.x, rig.pos.y, 0.5, 14, 0xfacc15);
-        }
-        this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.42);
-        this.winPointLight.intensity = 4.2;
-        soundEngine.playMultiplierHit(m.value);
-        this.callbacks.onMultiplierPulse?.(m.value, runningExtra);
-        await this.waitMs(300 * tMul);
-        if (this.disposed) return;
-      }
-
-      for (const m of outcome.boardMultipliers) {
-        const rig = this.findRigAt(m.col, m.row);
-        if (rig) {
-          rig.targetPos.z = 0.16;
-          rig.targetScale = 1.04;
-        }
-      }
-    }
-
-    // Phase 5: Bonus Scatter Celebration
+    // Phase 4: Bonus Scatter Celebration (3+ Scatter cards -> 10 Free Spins)
     if (outcome.awardedFreeSpins > 0) {
       soundEngine.playBonusTrigger();
       this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.52);

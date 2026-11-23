@@ -76,8 +76,8 @@ export const TitleOverlay: React.FC<TitleOverlayProps> = ({ onStart }) => {
         </svg>
 
         <p className="text-sm text-stone-300 leading-relaxed mb-6">
-          Pay-anywhere 3D scatter cascades with foil multipliers up to 25× and
-          free spin vaults.
+          Pay-anywhere 3D scatter cascades with grid multipliers up to 10× and
+          10-spin scatter vaults.
         </p>
 
         <button

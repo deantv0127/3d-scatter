@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MultiplierValue, SymbolId } from './types';
+import { SymbolId } from './types';
 
 function drawRoundedRectPath(
   ctx: CanvasRenderingContext2D,
@@ -139,7 +139,7 @@ interface CardStyle {
   label: string;
 }
 
-function getCardStyle(symbol: SymbolId, multiplier?: MultiplierValue): CardStyle {
+function getCardStyle(symbol: SymbolId): CardStyle {
   switch (symbol) {
     case 'DIAMOND':
       return {
@@ -229,40 +229,25 @@ function getCardStyle(symbol: SymbolId, multiplier?: MultiplierValue): CardStyle
         accentColor: '#fbcfe8',
         glowColor: 'rgba(244, 114, 182, 0.42)',
         cornerText: '✦',
-        label: 'BONUS',
-      };
-    case 'MULTIPLIER':
-      return {
-        bgTop: '#332307',
-        bgBottom: '#170f03',
-        frameColor: '#facc15',
-        accentColor: '#fef08a',
-        glowColor: 'rgba(250, 204, 21, 0.48)',
-        cornerText: `${multiplier ?? 2}×`,
-        label: 'MULTIPLIER',
+        label: 'SCATTER',
       };
   }
 }
 
-const ALL_SYMBOLS: Array<{ symbol: SymbolId; multiplier?: MultiplierValue }> = [
-  { symbol: 'DIAMOND' },
-  { symbol: 'CLUB' },
-  { symbol: 'HEART' },
-  { symbol: 'SPADE' },
-  { symbol: 'QUEEN' },
-  { symbol: 'KING' },
-  { symbol: 'ACE' },
-  { symbol: 'WILD' },
-  { symbol: 'BONUS' },
-  { symbol: 'MULTIPLIER', multiplier: 2 },
-  { symbol: 'MULTIPLIER', multiplier: 3 },
-  { symbol: 'MULTIPLIER', multiplier: 5 },
-  { symbol: 'MULTIPLIER', multiplier: 10 },
-  { symbol: 'MULTIPLIER', multiplier: 25 },
+const ALL_SYMBOLS: SymbolId[] = [
+  'DIAMOND',
+  'CLUB',
+  'HEART',
+  'SPADE',
+  'QUEEN',
+  'KING',
+  'ACE',
+  'WILD',
+  'BONUS',
 ];
 
 export class CardTextureAtlas {
-  private faceTextures = new Map<string, THREE.CanvasTexture>();
+  private faceTextures = new Map<SymbolId, THREE.CanvasTexture>();
   private backTexture: THREE.CanvasTexture | null = null;
   private feltTexture: THREE.CanvasTexture | null = null;
   private maxAnisotropy: number;
@@ -270,30 +255,23 @@ export class CardTextureAtlas {
 
   constructor(maxAnisotropy: number, isMobile: boolean) {
     this.maxAnisotropy = Math.min(maxAnisotropy, isMobile ? 4 : 8);
-    // Mobile-friendly resolution: 320x448 on mobile, 384x538 on desktop (base design space 512x716)
     this.cardScale = isMobile ? 0.625 : 0.75;
   }
 
   public preloadAll(renderer: THREE.WebGLRenderer): void {
     renderer.initTexture(this.getBackTexture());
     renderer.initTexture(this.getFeltTexture());
-    for (const item of ALL_SYMBOLS) {
-      const tex = this.getFaceTexture(item.symbol, item.multiplier);
-      renderer.initTexture(tex);
+    for (const symbol of ALL_SYMBOLS) {
+      renderer.initTexture(this.getFaceTexture(symbol));
     }
   }
 
-  public getFaceTexture(
-    symbol: SymbolId,
-    multiplier?: MultiplierValue,
-  ): THREE.CanvasTexture {
-    const key =
-      symbol === 'MULTIPLIER' ? `${symbol}_${multiplier ?? 2}` : symbol;
-    const cached = this.faceTextures.get(key);
+  public getFaceTexture(symbol: SymbolId): THREE.CanvasTexture {
+    const cached = this.faceTextures.get(symbol);
     if (cached) return cached;
 
-    const tex = this.buildFaceTexture(symbol, multiplier);
-    this.faceTextures.set(key, tex);
+    const tex = this.buildFaceTexture(symbol);
+    this.faceTextures.set(symbol, tex);
     return tex;
   }
 
@@ -419,10 +397,7 @@ export class CardTextureAtlas {
     return tex;
   }
 
-  private buildFaceTexture(
-    symbol: SymbolId,
-    multiplier?: MultiplierValue,
-  ): THREE.CanvasTexture {
+  private buildFaceTexture(symbol: SymbolId): THREE.CanvasTexture {
     const baseW = 512;
     const baseH = 716;
     const w = Math.round(baseW * this.cardScale);
@@ -433,7 +408,7 @@ export class CardTextureAtlas {
     const ctx = canvas.getContext('2d')!;
     ctx.scale(this.cardScale, this.cardScale);
 
-    const style = getCardStyle(symbol, multiplier);
+    const style = getCardStyle(symbol);
 
     const bg = ctx.createLinearGradient(0, 0, 0, baseH);
     bg.addColorStop(0, style.bgTop);
@@ -441,7 +416,6 @@ export class CardTextureAtlas {
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, baseW, baseH);
 
-    // Fast radial glow (avoids expensive mobile shadowBlur passes)
     const aura = ctx.createRadialGradient(
       baseW / 2,
       baseH / 2 - 10,
@@ -468,10 +442,7 @@ export class CardTextureAtlas {
     ctx.fillStyle = style.accentColor;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const isMult = symbol === 'MULTIPLIER';
-    ctx.font = isMult
-      ? '800 50px "JetBrains Mono", monospace'
-      : '700 58px "Cinzel", Georgia, serif';
+    ctx.font = '700 58px "Cinzel", Georgia, serif';
     ctx.fillText(style.cornerText, 82, 92);
 
     ctx.save();
@@ -492,7 +463,7 @@ export class CardTextureAtlas {
       drawSuitGlyph(ctx, symbol, baseW / 2, baseH / 2 - 14, 138);
       ctx.fillStyle = style.accentColor;
       drawSuitGlyph(ctx, symbol, baseW / 2, baseH / 2 - 14, 96);
-    } else if (symbol === 'QUEEN' || symbol === 'KING' || symbol === 'ACE') {
+    } else {
       ctx.strokeStyle = style.frameColor;
       ctx.lineWidth = 7;
       ctx.beginPath();
@@ -506,26 +477,6 @@ export class CardTextureAtlas {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(style.cornerText, baseW / 2, baseH / 2 + 18);
-    } else if (symbol === 'MULTIPLIER') {
-      ctx.strokeStyle = '#fde047';
-      ctx.lineWidth = 10;
-      ctx.beginPath();
-      ctx.arc(baseW / 2, baseH / 2 - 14, 148, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.strokeStyle = 'rgba(254, 240, 138, 0.45)';
-      ctx.lineWidth = 3;
-      ctx.setLineDash([12, 8]);
-      ctx.beginPath();
-      ctx.arc(baseW / 2, baseH / 2 - 14, 126, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      ctx.fillStyle = '#fef9c3';
-      ctx.font = '800 132px "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(`${multiplier ?? 2}×`, baseW / 2, baseH / 2 - 10);
     }
 
     ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';

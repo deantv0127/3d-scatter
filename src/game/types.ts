@@ -7,15 +7,14 @@ export type SymbolId =
   | 'KING'
   | 'ACE'
   | 'WILD'
-  | 'MULTIPLIER'
   | 'BONUS';
-
-export type MultiplierValue = 2 | 3 | 5 | 10 | 25;
 
 export const CASCADE_MULTIPLIER_TIERS = [2, 3, 4, 6, 10] as const;
 export type CascadeTierMultiplier = (typeof CASCADE_MULTIPLIER_TIERS)[number];
 
-export function getCascadeTierMultiplier(cascadeIndex: number): CascadeTierMultiplier {
+export function getCascadeTierMultiplier(
+  cascadeIndex: number,
+): CascadeTierMultiplier {
   const clamped = Math.max(
     0,
     Math.min(CASCADE_MULTIPLIER_TIERS.length - 1, cascadeIndex),
@@ -28,7 +27,6 @@ export interface CardCellData {
   col: number;
   row: number;
   symbol: SymbolId;
-  multiplier?: MultiplierValue;
 }
 
 export interface WinningGroup {
@@ -67,14 +65,6 @@ export interface SpinOutcome {
   cascades: CascadeStep[];
   finalGrid: CardCellData[][];
   peakTierMultiplier: number;
-  cascadeSubtotalWin: number;
-  boardMultipliers: Array<{
-    col: number;
-    row: number;
-    value: MultiplierValue;
-  }>;
-  boardMultiplierSum: number;
-  extraMultiplierFactor: number;
   totalWin: number;
   bonusCount: number;
   awardedFreeSpins: number;
@@ -110,7 +100,8 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
       { count: 8, mult: 1.5 },
       { count: 9, mult: 3.0 },
     ],
-    description: 'Match 6 or more anywhere on the table to trigger a scatter cascade.',
+    description:
+      'Match 6 or more anywhere on the table to trigger a scatter cascade.',
   },
   CLUB: {
     id: 'CLUB',
@@ -125,7 +116,8 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
       { count: 8, mult: 2.0 },
       { count: 9, mult: 3.8 },
     ],
-    description: 'Match 6 or more anywhere on the table to trigger a scatter cascade.',
+    description:
+      'Match 6 or more anywhere on the table to trigger a scatter cascade.',
   },
   HEART: {
     id: 'HEART',
@@ -140,7 +132,8 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
       { count: 8, mult: 2.5 },
       { count: 9, mult: 4.8 },
     ],
-    description: 'Match 6 or more anywhere on the table to trigger a scatter cascade.',
+    description:
+      'Match 6 or more anywhere on the table to trigger a scatter cascade.',
   },
   SPADE: {
     id: 'SPADE',
@@ -155,7 +148,8 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
       { count: 8, mult: 3.4 },
       { count: 9, mult: 6.5 },
     ],
-    description: 'Match 6 or more anywhere on the table to trigger a scatter cascade.',
+    description:
+      'Match 6 or more anywhere on the table to trigger a scatter cascade.',
   },
   QUEEN: {
     id: 'QUEEN',
@@ -170,7 +164,8 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
       { count: 7, mult: 4.4 },
       { count: 8, mult: 8.5 },
     ],
-    description: 'Royal card. Match 5 or more anywhere for high scatter payouts.',
+    description:
+      'Royal card. Match 5 or more anywhere for high scatter payouts.',
   },
   KING: {
     id: 'KING',
@@ -185,7 +180,8 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
       { count: 7, mult: 6.0 },
       { count: 8, mult: 12.0 },
     ],
-    description: 'Royal card. Match 5 or more anywhere for sovereign payouts.',
+    description:
+      'Royal card. Match 5 or more anywhere for sovereign payouts.',
   },
   ACE: {
     id: 'ACE',
@@ -200,7 +196,8 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
       { count: 6, mult: 7.5 },
       { count: 7, mult: 16.0 },
     ],
-    description: 'Top royal card. Pays with just 4 or more anywhere on the board.',
+    description:
+      'Top royal card. Pays with just 4 or more anywhere on the board.',
   },
   WILD: {
     id: 'WILD',
@@ -210,17 +207,8 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
     minMatch: 1,
     accentHex: '#2dd4bf',
     payouts: [],
-    description: 'Substitutes for all suit and royal cards simultaneously in scatter wins.',
-  },
-  MULTIPLIER: {
-    id: 'MULTIPLIER',
-    name: 'Foil Multiplier',
-    shortLabel: '×',
-    tier: 'special',
-    minMatch: 1,
-    accentHex: '#facc15',
-    payouts: [],
-    description: 'Carries 2× to 25×. Multiplies on top of the active grid multiplier trail.',
+    description:
+      'Substitutes for all suit and royal cards simultaneously in scatter wins.',
   },
   BONUS: {
     id: 'BONUS',
@@ -230,6 +218,7 @@ export const SYMBOL_METADATA: Record<SymbolId, SymbolMeta> = {
     minMatch: 3,
     accentHex: '#f472b6',
     payouts: [],
-    description: 'Land 3 or more anywhere to trigger 8 Free Spins with persistent multipliers.',
+    description:
+      'Land 3 or more anywhere on the board to trigger 10 Free Spins.',
   },
 };
