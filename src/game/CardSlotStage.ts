@@ -22,10 +22,10 @@ const _color = new THREE.Color();
 const _raycaster = new THREE.Raycaster();
 const _pointerNdc = new THREE.Vector2();
 
-const CARD_W = 0.98;
-const CARD_H = 1.38;
-const CARD_GAP_X = 0.19;
-const CARD_GAP_Y = 0.17;
+const CARD_W = 1.16;
+const CARD_H = 1.62;
+const CARD_GAP_X = 0.12;
+const CARD_GAP_Y = 0.12;
 const COL_STEP = CARD_W + CARD_GAP_X;
 const ROW_STEP = CARD_H + CARD_GAP_Y;
 
@@ -310,11 +310,11 @@ export class CardSlotStage {
 
   private buildTableStage(): void {
     const plinthPoints = [
-      new THREE.Vector2(0, -0.34),
-      new THREE.Vector2(4.95, -0.34),
-      new THREE.Vector2(5.15, -0.18),
-      new THREE.Vector2(4.92, -0.02),
-      new THREE.Vector2(4.62, 0.0),
+      new THREE.Vector2(0, -0.36),
+      new THREE.Vector2(5.45, -0.36),
+      new THREE.Vector2(5.68, -0.18),
+      new THREE.Vector2(5.42, -0.02),
+      new THREE.Vector2(5.12, 0.0),
       new THREE.Vector2(0, 0.0),
     ];
     const plinthGeo = new THREE.LatheGeometry(plinthPoints, 40);
@@ -324,13 +324,13 @@ export class CardSlotStage {
       metalness: 0.65,
     });
     const plinth = new THREE.Mesh(plinthGeo, plinthMat);
-    plinth.position.set(0, -2.72, -0.35);
+    plinth.position.set(0, -3.04, -0.35);
     plinth.receiveShadow = true;
     this.stageGroup.add(plinth);
     this.sharedGeometries.push(plinthGeo);
     this.sharedMaterials.push(plinthMat);
 
-    const feltGeo = new THREE.CircleGeometry(4.56, 40);
+    const feltGeo = new THREE.CircleGeometry(5.06, 40);
     feltGeo.rotateX(-Math.PI / 2);
     const feltMat = new THREE.MeshStandardMaterial({
       map: this.atlas.getFeltTexture(),
@@ -338,13 +338,13 @@ export class CardSlotStage {
       metalness: 0.04,
     });
     const felt = new THREE.Mesh(feltGeo, feltMat);
-    felt.position.set(0, -2.7, -0.35);
+    felt.position.set(0, -3.02, -0.35);
     felt.receiveShadow = true;
     this.stageGroup.add(felt);
     this.sharedGeometries.push(feltGeo);
     this.sharedMaterials.push(feltMat);
 
-    const bezelGeo = new THREE.TorusGeometry(4.68, 0.085, 12, 48);
+    const bezelGeo = new THREE.TorusGeometry(5.18, 0.09, 12, 48);
     bezelGeo.rotateX(Math.PI / 2);
     const brassMat = new THREE.MeshStandardMaterial({
       color: 0xd4af37,
@@ -352,13 +352,13 @@ export class CardSlotStage {
       roughness: 0.22,
     });
     const bezel = new THREE.Mesh(bezelGeo, brassMat);
-    bezel.position.set(0, -2.69, -0.35);
+    bezel.position.set(0, -3.01, -0.35);
     this.stageGroup.add(bezel);
     this.sharedGeometries.push(bezelGeo);
     this.sharedMaterials.push(brassMat);
 
-    const boardW = GRID_COLS * COL_STEP + 0.34;
-    const boardH = GRID_ROWS * ROW_STEP + 0.32;
+    const boardW = GRID_COLS * CARD_W + (GRID_COLS - 1) * CARD_GAP_X + 0.34;
+    const boardH = GRID_ROWS * CARD_H + (GRID_ROWS - 1) * CARD_GAP_Y + 0.32;
     const boardShape = createRoundedRectShape(boardW, boardH, 0.22);
     const boardGeo = new THREE.ExtrudeGeometry(boardShape, {
       depth: 0.08,
@@ -408,7 +408,7 @@ export class CardSlotStage {
       opacity: 0.65,
     });
     const contactPlane = new THREE.Mesh(contactGeo, contactMat);
-    contactPlane.position.set(0, -3.08, -0.35);
+    contactPlane.position.set(0, -3.42, -0.35);
     this.stageGroup.add(contactPlane);
     this.sharedGeometries.push(contactGeo);
     this.sharedMaterials.push(contactMat);
@@ -675,18 +675,24 @@ export class CardSlotStage {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
 
-    // Extra vertical padding at top for the premium multiplier indicator above grid window
-    const gridWidth = GRID_COLS * COL_STEP + 0.68;
-    const gridHeight = GRID_ROWS * ROW_STEP + 2.45;
+    const spanW = GRID_COLS * CARD_W + (GRID_COLS - 1) * CARD_GAP_X;
+    const spanH = GRID_ROWS * CARD_H + (GRID_ROWS - 1) * CARD_GAP_Y;
+
+    // Tight framing so cards maximize viewport presence while clearing top multiplier rail & bottom dock
+    const horizMargin = aspect < 0.85 ? 0.36 : 0.65;
+    const vertMargin = aspect < 0.85 ? 2.1 : 1.95;
+    const gridWidth = spanW + horizMargin;
+    const gridHeight = spanH + vertMargin;
+
     const vFovRad = THREE.MathUtils.degToRad(this.camera.fov);
     const distForHeight = gridHeight / (2 * Math.tan(vFovRad / 2));
     const hFovRad = 2 * Math.atan(Math.tan(vFovRad / 2) * aspect);
     const distForWidth = gridWidth / (2 * Math.tan(hFovRad / 2));
 
-    const targetZ = Math.max(distForHeight, distForWidth, 8.0);
-    const centerShiftY = aspect < 0.85 ? 0.34 : 0.36;
+    const targetZ = Math.max(distForHeight, distForWidth, 7.6);
+    const centerShiftY = aspect < 0.85 ? 0.22 : 0.28;
     this.baseCamPos.set(0, centerShiftY, targetZ);
-    this.baseLookTarget.set(0, centerShiftY - 0.16, 0);
+    this.baseLookTarget.set(0, centerShiftY - 0.14, 0);
   }
 
   private waitMs(ms: number): Promise<void> {
@@ -723,7 +729,7 @@ export class CardSlotStage {
       rig.springBounce = false;
       rig.targetPos.set(
         cellToWorldX(rig.cell.col),
-        cellToWorldY(rig.cell.row) - 4.4,
+        cellToWorldY(rig.cell.row) - 4.9,
         -0.5,
       );
       rig.targetRot.set(-0.28, Math.PI * 0.75, 0);
@@ -742,7 +748,7 @@ export class CardSlotStage {
 
         const wx = cellToWorldX(col);
         const wy = cellToWorldY(row);
-        rig.pos.set(wx, wy + 3.8 + (GRID_ROWS - row) * 0.3, 0.16);
+        rig.pos.set(wx, wy + 4.3 + (GRID_ROWS - row) * 0.34, 0.16);
         rig.rot.set(-0.16, -Math.PI * 0.85, 0);
         rig.scale = 0.94;
         rig.velY = -4.2;

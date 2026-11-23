@@ -23,9 +23,9 @@ const BASE_WEIGHTS: Array<{ symbol: SymbolId; weight: number }> = [
   { symbol: 'SPADE', weight: 16 },
   { symbol: 'QUEEN', weight: 11 },
   { symbol: 'KING', weight: 9 },
-  { symbol: 'ACE', weight: 7 },
-  { symbol: 'WILD', weight: 4.5 },
-  { symbol: 'BONUS', weight: 3.8 },
+  { symbol: 'ACE', weight: 6.5 },
+  { symbol: 'WILD', weight: 3.65 },
+  { symbol: 'BONUS', weight: 3.7 },
 ];
 
 const FREE_SPIN_WEIGHTS: Array<{ symbol: SymbolId; weight: number }> = [
@@ -35,9 +35,9 @@ const FREE_SPIN_WEIGHTS: Array<{ symbol: SymbolId; weight: number }> = [
   { symbol: 'SPADE', weight: 15 },
   { symbol: 'QUEEN', weight: 13 },
   { symbol: 'KING', weight: 11 },
-  { symbol: 'ACE', weight: 9 },
-  { symbol: 'WILD', weight: 7.0 },
-  { symbol: 'BONUS', weight: 3.2 },
+  { symbol: 'ACE', weight: 8.5 },
+  { symbol: 'WILD', weight: 6.4 },
+  { symbol: 'BONUS', weight: 3.1 },
 ];
 
 const REGULAR_SYMBOLS: SymbolId[] = [
